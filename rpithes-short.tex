@@ -1,0 +1,98 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
+%                       rpithes-short.tex                         %
+%         Template for a short thesis all in one file             %
+%        (titlepage info below assumes masters degree}            %
+%  Just run latex (or pdflatex) on this file to see how it looks  %
+%      Be sure to run twice to get correct TOC and citations      %
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
+%
+%  To produce the abstract title page followed by the abstract,
+%  see the template file, "abstitle-mas.tex"
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\documentclass{thesis}
+\usepackage{graphicx}   % if you want to include graphics files
+
+% Use the first command below if you want captions over 1 line indented.
+% A side effect of this is to remove the use of bold for captions. 
+% To restore bold, also include the second line below.
+%\usepackage[hang]{caption}     % to indent subsequent lines of captions
+%\renewcommand{\captionfont}{\bfseries} % only needed with caption package;
+                                        %   otherwise bold is default)
+                                        
+%%%%%%%%%%%%%%%%%%%%  supply titlepage info  %%%%%%%%%%%%%%%%%%%%%
+\thesistitle{\bf GPU Acceleration of\\MilkyWay@Home N-Body}        
+\author{Clayton Rayment}        
+\degree{Master of Science}
+\department{Computer Science} % provide your area of study here; e.g.,
+%  "Mechanical Engineering", "Nuclear Engineering", "Physics", etc.
+\thadviser{Heidi Newberg}
+\cothadviser{Carlos Varela} %if needed
+\cocothadviser{W. Randolph Franklin} % if needed
+%  For a masters project use \projadviser instead of \thadviser, 
+%  and \coprojadviser and \cocoprojadviser if needed. 
+\submitdate{November 2017\\(For Graduation Dec 2017)}        
+%\copyrightyear{1685}  % if date omitted, current year is used. 
+%%%%%%%%%%%%%%%%%%%%%   end titlepage info  %%%%%%%%%%%%%%%%%%%%%%
+      
+\begin{document} 
+\titlepage             % Print titlepage   
+%\copyrightpage        % optional         
+\tableofcontents       % required 
+\listoftables          % required if there are tables
+\listoffigures         % required if there are figures
+
+\specialhead{ACKNOWLEDGMENT}
+The acknowledgment text goes here. Unlike chapter headings, 
+this heading is not numbered.
+
+\specialhead{ABSTRACT}
+Presentation of an efficient GPU based N-Body algorithm for use on the MilkyWay@Home project. Implementation of GPU based treecode using space-filling curves, and an examination of performance and accuracy as compared to the current CPU based N-Body algorithm.
+
+\chapter{INTRODUCTION}
+\section{MilkyWay@Home}
+MilkyWay@Home is a large-scale distributed parameter fitting project run on the BOINC network. Currently, over 20,000 users volunteer their compute time towards the project, putting our network at just over half a petaFLOPS of total computing performance.  One focus of the project is computation of N-Body simulations on said volunteer computers. Because we depend on volunteer time to run computations, it is important to run as efficiently as possible on volunteered time. To this end, we currently employ a Barnes-Hut treecode algorithm on the CPU in order to streamline CPU efficiency. With the onset of consumer grade GPUs, however, many volunteer computers have a GPU which is currently unutilized by MilkyWay@Home.
+\section{GPU Computing}
+A Graphics Processing Unit (GPU) is a major component of modern computing device. Run alongside the Central Processing Unit (CPU) the GPU is a massively parallel processor that performs many display-related computations. With the onset of modern APIs to access the GPU such as OpenCL, and the increase in floating point hardware available, it is possible to use this device to parallelize scientific computations such as the gravitational N-body problem.
+
+\chapter{METHODS}
+\section{CPU N-Body}
+In its current state, CPU N-body is performed using a Barnes-Hut treecode algorithm. To begin, the simulation space is recursively divided into octants, creating an octree. This recursive subdivision continues untill there are either one or zero particles in each leaf of the resulting octree. Once the tree is constructed, it is threaded to vectorize force calculation using \texttt{next} and \texttt{more} pointers. 
+
+\section{Brute Force GPU N-Body}
+The first algorithm that was implemented was a simple brute-force implementation that calculates all forces between all bodies in the simulation. To begin, a buffer containing all of the body information is created on the GPU, and the data from the host machine is passed to the GPU. Once the GPU has recieved all of the data, simulating begins. Each timestep, the forces between each body are calculated, and the positions are updated. OpenCL uses a queue based system for calling kernel operatiosn on the GPU. In order to complete the required number of time steps for our simulation, we simply queue an appropriate number of kernal calls, and allow the GPU to run until there are no more kernel calls in the queue.
+\section{Treecode GPU N-Body}
+
+
+\chapter{RESULTS}
+\chapter{FUTURE WORK}
+
+% The following produces a numbered bibliography where the numbers
+% correspond to the \cite commands in the text.
+\specialhead{LITERATURE CITED}
+\begin{singlespace}
+\begin{thebibliography}{99}
+\bibitem{thisbook} This is the first item in the Bibliography.
+Let's make it very long so it takes more than one line.
+Let's make it very long so it takes more than one line.
+\bibitem{anotherbook} The second item in the Bibliography.
+\end{thebibliography}
+\end{singlespace}
+
+%%%%%%%%%%%%%%%%%%%%%%%  For Appendices  %%%%%%%%%%%%%%%%%%%
+\appendix    % This command is used only once!
+\addtocontents{toc}{\parindent0pt\vskip12pt APPENDICES} %toc entry, no page #
+\chapter{THIS IS AN APPENDIX}
+Note the numbering of the chapter heading is changed.
+This is a sentence to take up space and look like text.
+\section{A Section Heading}
+This is how equations are numbered in an appendix:
+\begin{equation}
+x^2 + y^2 = z^2
+\end{equation} 
+
+\chapter{THIS IS ANOTHER APPENDIX}
+This is a sentence to take up space and look like text.
+
+\end{document}
