@@ -63,6 +63,16 @@ In its current state, CPU N-body is performed using a Barnes-Hut treecode algori
 \section{Brute Force GPU N-Body}
 The first algorithm that was implemented was a simple brute-force implementation that calculates all forces between all bodies in the simulation. To begin, a buffer containing all of the body information is created on the GPU, and the data from the host machine is passed to the GPU. Once the GPU has recieved all of the data, simulating begins. Each timestep, the forces between each body are calculated, and the positions are updated. OpenCL uses a queue based system for calling kernel operatiosn on the GPU. In order to complete the required number of time steps for our simulation, we simply queue an appropriate number of kernal calls, and allow the GPU to run until there are no more kernel calls in the queue.
 \section{Treecode GPU N-Body}
+The most difficult part of implementation of parallel treecode on the GPU is construction of the octree in parallel. Since most GPUs do not support recursive function calls, a complete paradigm shift is required. The algorithm for parallel tree construction is used from \cite{karras:2012}. While Karras et al. only discuss binary tree construction in depth, it is still useful for creation of an octree in parallel. The construction of the octree can be broken down into seven steps. 
+\begin{enumerate}
+    \item Encode all particle locations by a 30-bit Morton code
+    \item Sort all particles based on 30-bit Morton code.
+    \item Construct a binary radix tree.
+    \item Allocate octree nodes.
+    \item Link octree nodes.
+    \item Thread octree nodes with next and more pointers to make force calculations faster.
+\end{enumerate}
+Once the tree has been constructed, force calculation occurs just like it would on the CPU, except each particle belongs to its own thread. By maximixing the amount of parallelizability, 
 
 
 \chapter{RESULTS}
