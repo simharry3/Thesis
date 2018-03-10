@@ -32,7 +32,7 @@
 \cocothadviser{W. Randolph Franklin} % if needed
 %  For a masters project use \projadviser instead of \thadviser, 
 %  and \coprojadviser and \cocoprojadviser if needed. 
-\submitdate{November 2017\\(For Graduation Dec 2017)}        
+\submitdate{March 2018\\(For Graduation May 2018)}        
 %\copyrightyear{1685}  % if date omitted, current year is used. 
 %%%%%%%%%%%%%%%%%%%%%   end titlepage info  %%%%%%%%%%%%%%%%%%%%%%
       
@@ -63,6 +63,8 @@ In its current state, CPU N-body is performed using a Barnes-Hut treecode algori
 \section{Brute Force GPU N-Body}
 The first algorithm that was implemented was a simple brute-force implementation that calculates all forces between all bodies in the simulation. To begin, a buffer containing all of the body information is created on the GPU, and the data from the host machine is passed to the GPU. Once the GPU has recieved all of the data, simulating begins. Each timestep, the forces between each body are calculated, and the positions are updated. OpenCL uses a queue based system for calling kernel operatiosn on the GPU. In order to complete the required number of time steps for our simulation, we simply queue an appropriate number of kernal calls, and allow the GPU to run until there are no more kernel calls in the queue.
 \subsection{Implementation}
+\subsubsection{Force Calculation}
+\subsubsection{Integration}
 %------------------------------------------------------------------
 \section{Treecode GPU N-Body}
 The most difficult part of implementation of parallel treecode on the GPU is construction of the octree in parallel. Since most GPUs do not support recursive function calls, a complete paradigm shift is required. The algorithm for parallel tree construction is used from \cite{karras:2012}. While Karras et al. only discuss binary tree construction in depth, it is still useful for creation of an octree in parallel. The construction of the octree can be broken down into eight steps. 
@@ -133,8 +135,8 @@ This is how equations are numbered in an appendix:
 x^2 + y^2 = z^2
 \end{equation} 
 
-%==================================================================
-\chapter{THIS IS ANOTHER APPENDIX}
-This is a sentence to take up space and look like text.
+% %==================================================================
+% \chapter{THIS IS ANOTHER APPENDIX}
+% This is a sentence to take up space and look like text.
 
 \end{document}
