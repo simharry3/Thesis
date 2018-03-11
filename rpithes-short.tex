@@ -14,6 +14,7 @@
 \documentclass{thesis}
 \usepackage{graphicx}   % if you want to include graphics files
 \usepackage{amsmath}
+\usepackage{algpseudocode}
 
 % Use the first command below if you want captions over 1 line indented.
 % A side effect of this is to remove the use of bold for captions. 
@@ -37,6 +38,9 @@
 %\copyrightyear{1685}  % if date omitted, current year is used. 
 %%%%%%%%%%%%%%%%%%%%%   end titlepage info  %%%%%%%%%%%%%%%%%%%%%%
       
+
+\newcommand{\Psub}{\mathbin{\text{$\vcenter{\hbox{\textcircled{$-$}}}$}}}
+
 \begin{document} 
 \titlepage             % Print titlepage   
 %\copyrightpage        % optional         
@@ -73,6 +77,18 @@ Force calculation and integration for the brute force algorithm is broken down i
 \end{enumerate}
 \subsubsection{Force Calculation}
 Brute force GPU uses a parallel $O(n^2)$ algorithm. In parallel, each particle sums up the force enacted on it by every other particle in the simulation. Shown below is the algorithm used to determine the forces acting on each particle.
+\begin{algorithmic}
+    \ForAll{S in Particles} in parallel
+        \ForAll{P in Particles}
+            \State $C1 \gets S.id < \text{NUM\_BODIES}$
+            \State $C2 \gets \text{THREAD\_ID} < \text{NUM\_BODIES}$
+            \State $dR2 \gets \sum_i (P.\text{pos}[i] - S.\text{pos}[i]) + \text{EPS2}$
+            \State $dR \gets \sqrt{dR2}$
+            \State $ai \gets P.mass/(dr*dr2) * c1 * c2$
+            \State $S.a \gets S.a + ai$ 
+        \EndFor
+    \EndFor
+\end{algorithmic}
 \subsubsection{Integration}
 CPU N-Body uses a half-velocity integration method. We assume constant acceleration over the timestep, which means that our average velocity will be given by:
 \begin{align}
@@ -116,9 +132,18 @@ We now have an incompletely linked octree. In the final step of octree construct
 \subsubsection{Octree Node Statistics}
 Once we have completed our octree hierarchy of particles, we are able to perform the first calculations on the structure. For each node in the octree, we must determine both the center of mass, and the total mass enclosed. To do so, we compute the range of the octree node just like we did in binary tree construction, and then serially compute the center of mass and mass enclosed using each of the contained particles. The rationale behind serial computation is that we reduce the potential addition of floating point error.
 \subsubsection{Octree Threading}
-To reduce the required memory for octree storage, we thread the octree with \verb|NEXT| and \verb|MORE| indices. 
+To reduce the required memory for octree storage, we thread the octree with \verb|NEXT| and \verb|MORE| indices. First, each node is assigned a thread on the GPU. Then, in parallel, each thread selects their left most child as the location of the \verb|MORE| index. The \verb|NEXT| index is then selected by examination of the parent hierarchy, and the location of the node within the parent nodes's child array. First, the parent node is selected. Next, starting at the location of the child assigned to the thread, the parent node's children array is scanned to the right for the next child. If a child is found before the end of the array, then that child's index is assigned as the next index for the original child node. Should the end of the array be reached before another child has been found, we must ascend to the next level of the tree and repeat the process. Should the root node of the tree be reached, and no right hand child be found, we descend the leftmost branch of the tree to a level of \verb|TREELEVEL - 1| and assign that node's index to the origninal child's next index where \verb|TREELEVEL| is the tree level of the original child node.
 \subsubsection{Force Calculation}
+Once the tree has been threaded, it is now time to perform force calculations. Each leaf (particle) node is assigned a thread. Forces are then calculated as the thread follows the next pointer in the tree. Should an internal node be far enough away from the original particle, the center of mass of that node is used rather than calculating the forces to all particles within the system. Should the node not meet this criteria, the \verb|MORE| index is followed to a tree depth which meets this criteria, at which point the \verb|NEXT| index will be followed, and forces calculated like usual.
 \subsubsection{Integration}
+Integration follows the same four step procedure as the brute force algorithm
+\begin{enumerate}
+    \item Advance Half Velocity
+    \item Advance Position
+    \item Calculate Force
+    \item Advance Half Velocity
+\end{enumerate}
+In fact, the only difference between the Brute Force GPU algorithm and the Treecode GPU algorithm are how the forces are calculated. 
 %==================================================================
 \chapter{RESULTS}
 \section{CPU N-Body}
@@ -131,6 +156,8 @@ To reduce the required memory for octree storage, we thread the octree with \ver
 \subsection{Treecode}
 %------------------------------------------------------------------
 \section{Performance Comparison}
+\subsection{Statistical}
+\subsection{Performance}
 
 %==================================================================
 \chapter{FUTURE WORK}
