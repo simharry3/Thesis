@@ -13,6 +13,7 @@
 
 \documentclass{thesis}
 \usepackage{graphicx}   % if you want to include graphics files
+\usepackage{amsmath}
 
 % Use the first command below if you want captions over 1 line indented.
 % A side effect of this is to remove the use of bold for captions. 
@@ -61,14 +62,30 @@ A Graphics Processing Unit (GPU) is a major component of modern computing device
 In its current state, CPU N-body is performed using a Barnes-Hut treecode algoritm, however the option exists to run a simulation using a brute-force algorithm. To begin, the simulation space is recursively divided into octants, creating an octree. This recursive subdivision continues untill there are either one or zero particles in each leaf of the resulting octree. Once the tree is constructed, it is threaded to vectorize force calculation using \texttt{next} and \texttt{more} pointers. 
 %------------------------------------------------------------------
 \section{Brute Force GPU N-Body}
-The first algorithm that was implemented was a simple brute-force implementation that calculates all forces between all bodies in the simulation. To begin, a buffer containing all of the body information is created on the GPU, and the data from the host machine is passed to the GPU. Once the GPU has recieved all of the data, simulating begins. Each timestep, the forces between each body are calculated, and the positions are updated. OpenCL uses a queue based system for calling kernel operatiosn on the GPU. In order to complete the required number of time steps for our simulation, we simply queue an appropriate number of kernal calls, and allow the GPU to run until there are no more kernel calls in the queue.
+The first algorithm that was implemented was a simple brute-force implementation that calculates all forces between all bodies in the simulation. To begin, a buffer containing all of the body information is created on the GPU, and the data from the host machine is passed to the GPU. Once the GPU has recieved all of the data, simulating begins. Each timestep, the forces between each body are calculated, and the positions are updated. OpenCL uses a queue based system for calling kernel operatiosn on the GPU. In order to complete the required number of time steps for our simulation, we simply queue an appropriate number of kernal calls, and allow the GPU to run until there are no more kernel calls in the queue. Shown in Figure <NUMBER> is a flowchart diagramming the brute force GPU algorithm.
 \subsection{Implementation}
+Force calculation and integration for the brute force algorithm is broken down into four steps performed by three kernels:
+\begin{enumerate}
+    \item Advance Half Velocity
+    \item Advance Position
+    \item Calculate Force
+    \item Advance Half Velocity
+\end{enumerate}
 \subsubsection{Force Calculation}
+Brute force GPU uses a parallel $O(n^2)$ algorithm. In parallel, each particle sums up the force enacted on it by every other particle in the simulation. Shown below is the algorithm used to determine the forces acting on each particle.
 \subsubsection{Integration}
+CPU N-Body uses a half-velocity integration method. We assume constant acceleration over the timestep, which means that our average velocity will be given by:
+\begin{align}
+    V_{avg} &= \frac{V_f}{2}
+\end{align}
+We define, then, a kernel which will advance the velocity of a particle by half of what it should be given the current acceleration. Shown below is the kernel which computes this.
+Next, we advance the position of the particle based on this half velocity.
+Interleaved within the half velocity updates, we compute the new forces on the bodies. Finally, one more half velocity addition is completed to bring the particle up to its final velocity for the timestep. Figure <NUMBER> shows this interleaving process in more detail.
 %------------------------------------------------------------------
 \section{Treecode GPU N-Body}
-The most difficult part of implementation of parallel treecode on the GPU is construction of the octree in parallel. Since most GPUs do not support recursive function calls, a complete paradigm shift is required. The algorithm for parallel tree construction is used from \cite{karras:2012}. While Karras et al. only discuss binary tree construction in depth, it is still useful for creation of an octree in parallel. The construction of the octree can be broken down into eight steps. 
+The most difficult part of implementation of parallel treecode on the GPU is construction of the octree in parallel. Since most GPUs do not support recursive function calls, a complete paradigm shift is required. The algorithm for parallel tree construction is used from \cite{karras:2012}. While Karras et al. only discuss binary tree construction in depth, it is still useful for creation of an octree in parallel. The construction of the octree can be broken down into nine steps. Shown in Figure <NUMBER> is a flowchart diagramming the Treecode GPU algorithm.
 \begin{enumerate}
+    \item Compute bounding box of simulation space
     \item Encode all particle locations by a 30-bit Morton code
     \item Sort all particles based on 30-bit Morton code.
     \item Construct a binary radix tree.
@@ -84,13 +101,22 @@ Once the tree has been constructed, force calculation occurs just like it would 
     \item Integration
 \end{enumerate}
 \subsection{Implementation}
+\subsubsection{Bounding Box}
+To begin, we musit first compute a bounding box of the simulation space. This reduces to a parallel reduction opertion to find the minimum and maximum of three dimensions. To do this, all of particles positions are loaded into two arrays for each dimension, one for minumum and one for maximum. Any extra array slots caused by an effective n-body count which is higher than the total n-body count is filled with \verb|DBL_MAX| for the minimum array, and \verb|-DBL_MAX| for the maximum array. A parallel comparitive reduction is then performed on each of these six arrays in order to produce a minimum and maximum bound for each dimension. Shown below is the general process of the parallel reduction bounding box algorithm:
 \subsubsection{Position Encoding}
+Once the bounding values of the simulation space have been calculated, we are able to encode each particle's location within the bounding box with a 30-bit morton code, which tells us where along a space-filling z-order curve each particle lands. The deterministic nature of collapsing three dimensions into one dimension using this curve allows us to keep local particles near eachother in the tree. The algorithm for position encoding is as follows:
 \subsubsection{Particle Sort}
+Now that morton codes have been obtained for each particle, we are able to sort the one dimensional array of particles while still preserving particle locality. To do this, we implement a bitonic sorting algorithm. Bitonic sort was selected as it is easily parallelized, and is agnostic to the underlying structure of particles it is sorting. Bitonic sort will take the same amount of time no matter how sorted or scrambled the items it is sorting are.
 \subsubsection{Binary Tree Construction}
+We are now ready to begin tree construction as outlined in \cite{Karas:2012}. For a binary tree, we know that we will require N-1 as many nodes as we have particles. Before simulation, we allocate a buffer of this size on the GPU. In parallel, we determine the hierarchy of the nodes by examining the morton code of the particle directly below it in the particle array. 
 \subsubsection{Octree Node Allocation}
+We now have a complete hierarchy of particles in the simulation based on their 30-bit morton code. However, as this is a spacial 3d simulation, it would instead be beneficial to place these particles in an octree. Unlike the binary tree, which should have full occupancy, it is unknown how many octree nodes we will need. To begin, we must first examine the binary tree and determine how many octree nodes each binary tree node will contribute to the final structure. 
 \subsubsection{Octree Hierarchy Generation}
+We now have an incompletely linked octree. In the final step of octree construction, we must complete the parent-child links of the tree, so that the structure can be followed during force calculation. Each node in the octree makes note of how many particle children it has, and an index of the first child, as the children in the particle array will be contiguous. 
 \subsubsection{Octree Node Statistics}
+Once we have completed our octree hierarchy of particles, we are able to perform the first calculations on the structure. For each node in the octree, we must determine both the center of mass, and the total mass enclosed. To do so, we compute the range of the octree node just like we did in binary tree construction, and then serially compute the center of mass and mass enclosed using each of the contained particles. The rationale behind serial computation is that we reduce the potential addition of floating point error.
 \subsubsection{Octree Threading}
+To reduce the required memory for octree storage, we thread the octree with \verb|NEXT| and \verb|MORE| indices. 
 \subsubsection{Force Calculation}
 \subsubsection{Integration}
 %==================================================================
