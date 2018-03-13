@@ -250,15 +250,16 @@ Finally, we return the original node counts from their buffer to make the prefix
                     $\text{octree}[\text{idx}].\text{com}[1] = \text{gpuBinaryTree}[g].\text{com}[1]$
                     $\text{octree}[\text{idx}].\text{com}[2] = \text{gpuBinaryTree}[g].\text{com}[2]$
                     $\text{octree}[\text{idx}].\text{massEnclosed} = \text{gpuBinaryTree}[g].\text{massEnclosed}$
-                    % if(i > 0){
-                    %     octree[\text{idx}].parent = index + i - 1;
-                    %     uint childIndex = extractBits(octree[index + i].prefix, 0);
-                    %     octree[\text{idx} - 1].children[childIndex] = index + i;
+                    \If($i > 0$)
+                        \State $\text{octree}[\text{idx}].parent \gets idx - 1$
+                        \State $\text{childIndex} \gets \text{extractBits}(\text{octree}[\text{idx}].\text{prefix}, 0)$
+                        \State $\text{octree}[\text{idx} - 1].\text{children}[\text{childIndex}] \gets \text{idx}$
+                    \EndIf
                 \EndFor
             \EndIf
             \State $\text{barrier}$
-            % if(count > 0){
-            %     uint testIndex = gpuBinaryTree[g].parent;
+            \If($count > 0$)
+                \State $\text{testIndex} \gets \text{gpuBinaryTree}[g].\text{parent}$
             %     uint childIndex = extractBits(octree[index].prefix, 0);
             %     while(testIndex != 0 && nodeCounts[testIndex] - nodeCounts[testIndex - 1] == 0){
             %         testIndex = gpuBinaryTree[testIndex].parent;
@@ -274,6 +275,7 @@ Finally, we return the original node counts from their buffer to make the prefix
             %         // octree[index].children[childIndex] = 1;
             %     }
             % }
+            \EndIf
         \Else
         %     octree[g].id = 0;
         %     octree[g].treeLevel = 0;
