@@ -16,6 +16,8 @@
 \usepackage{amsmath}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
+\usepackage{enumitem}
+\setlist{nolistsep}
 \graphicspath{{figures/}}
 
 % Use the first command below if you want captions over 1 line indented.
@@ -64,14 +66,19 @@ MilkyWay@Home is a large-scale distributed parameter fitting project run on the 
 A Graphics Processing Unit (GPU) is a major component of modern computing device. Run alongside the Central Processing Unit (CPU) the GPU is a massively parallel processor that performs many display-related computations. With the onset of modern APIs to access the GPU such as OpenCL, and the increase in floating point hardware available, it is possible to use this device to parallelize scientific computations such as the gravitational N-body problem. Over the last decade, the availibility of GPU devices on consumer computers has increased (INSERT CITATION). In addition to increased availability, the processing power available on these devices has increased (INSERT CITATION).
 %==================================================================
 \chapter{METHODS}
-\section{CPU N-Body}
-In its current state, CPU N-body is performed using a Barnes-Hut treecode algoritm, however the option exists to run a simulation using a brute-force algorithm. To begin, the simulation space is recursively divided into octants, creating an octree. This recursive subdivision continues untill there are either one or zero particles in each leaf of the resulting octree. Once the tree is constructed, it is threaded to vectorize force calculation using \texttt{next} and \texttt{more} pointers. 
+\section{Brute Force CPU N-Body}
+The existing brute force CPU algorithm implements an $O((N/P)^2)$ algorithm where $N$ is the number of simulation bodies and $P$ is the number of available processing threads. Each particle calculates the forces enacted on it from every other particle in the simulation. This is a very laborious computation, however, and is generally disregarded in favor of the Barnes-Hut treecode N-Body algorithm.
+%------------------------------------------------------------------
+\section{Treecode CPU N-Body}
+The current implementation of MilkyWay@Home utilizes a Barnes-Hut treecode algorithm which makes a close approximation to the brute force algorithm by ignoring groups of particles which are far away, and instead using their center of mass to perform a force calculation.
+
+To begin, the simulation space is recursively divided into octants, creating an octree. This recursive subdivision continues untill there are either one or zero particles in each leaf of the resulting octree. Once the tree is constructed, it is threaded to vectorize force calculation using \texttt{next} and \texttt{more} pointers.
 %------------------------------------------------------------------
 \section{Brute Force GPU N-Body}
-The first algorithm that was implemented was a simple brute-force implementation that calculates all forces between all bodies in the simulation. To begin, a buffer containing all of the body information is created on the GPU, and the data from the host machine is passed to the GPU. Once the GPU has recieved all of the data, simulating begins. Each timestep, the forces between each body are calculated, and the positions are updated. OpenCL uses a queue based system for calling kernel operatiosn on the GPU. In order to complete the required number of time steps for our simulation, we simply queue an appropriate number of kernal calls, and allow the GPU to run until there are no more kernel calls in the queue. Shown in Figure \ref{fig:GPUBruteForceAlg} is a flowchart diagramming the brute force GPU algorithm.
+Brute force GPU N-Body is very similar to the CPU algorithm described previously, with slight changes regarding GPU memory usage. To begin, a buffer containing all of the body information is created on the GPU, and the data from the host machine is passed to the GPU. Once the GPU has recieved all of the data, simulating begins. Each timestep, the forces between each body are calculated, and the positions are updated. OpenCL uses a queue based system for calling kernel operatiosn on the GPU. In order to complete the required number of time steps for our simulation, we simply queue an appropriate number of kernal calls, and allow the GPU to run until there are no more kernel calls in the queue. Shown in Figure \ref{fig:GPUBruteForceAlg} is a flowchart diagramming the brute force GPU algorithm.
 
 \begin{figure}[h]
-    \caption{Brute Force algorithm flowchart showing the computational process between CPU and GPU.}
+    \caption{Brute Force algorithm flowchart showing the computational process between CPU and GPU}
     \label{fig:GPUBruteForceAlg}
     \centering
     \includegraphics[width=15cm]{bruteForceAlgorithmFlowchart}
@@ -79,34 +86,38 @@ The first algorithm that was implemented was a simple brute-force implementation
 
 \subsection{Implementation}
 Force calculation and integration for the brute force algorithm is broken down into four steps performed by three kernels:
-\begin{enumerate}
+\begin{enumerate}[noitemsep]
     \item Advance Half Velocity
     \item Advance Position
-    \item Calculate Force
     \item Advance Half Velocity
+    \item Calculate Force
 \end{enumerate}
 \subsubsection{Force Calculation}
-Brute force GPU uses a parallel $O(n^2)$ algorithm. In parallel, each particle sums up the force enacted on it by every other particle in the simulation. Shown below is the algorithm used to determine the forces acting on each particle.
-\begin{algorithmic}
-    \ForAll{S in Particles} in parallel
-        \ForAll{P in Particles}
-            \State $C1 \gets S.id < \text{NUM\_BODIES}$
-            \State $C2 \gets \text{THREAD\_ID} < \text{NUM\_BODIES}$
-            \State $dR2 \gets \sum_i (P.\text{pos}[i] - S.\text{pos}[i]) + \text{EPS2}$
-            \State $dR \gets \sqrt{dR2}$
-            \State $ai \gets P.mass/(dr*dr2) * c1 * c2$
-            \State $S.a \gets S.a + ai$ 
+Brute force GPU uses a parallel $O(N^2)$ algorithm where $N$ is the number of particles in the simulation. In parallel, each particle sums up the force enacted on it by every other particle in the simulation. Shown below is the algorithm used to determine the forces acting on each particle.
+\begin{algorithm}
+    \label{alg:ForceCalculationExact}
+    \caption{Brute force force calculation algorithm}
+    \begin{algorithmic}
+        \ForAll{S in Particles} in parallel
+            \ForAll{P in Particles}
+                \State $C1 \gets S.id < \text{NUM\_BODIES}$
+                \State $C2 \gets \text{THREAD\_ID} < \text{NUM\_BODIES}$
+                \State $dR2 \gets \sum_i (P.\text{pos}[i] - S.\text{pos}[i])^2 + \text{EPS2}$
+                \State $dR \gets \sqrt{dR2}$
+                \State $ai \gets P.mass/(dr*dr2) * c1 * c2$
+                \State $S.a \gets S.a + ai$ 
+            \EndFor
         \EndFor
-    \EndFor
-\end{algorithmic}
+    \end{algorithmic}
+\end{algorithm}
 \subsubsection{Integration}
 CPU N-Body uses a half-velocity integration method. We assume constant acceleration over the timestep, which means that our average velocity will be given by:
 \begin{align}
-    V_{avg} &= \frac{V_f}{2}
+    V_{avg} &= V_i + \frac{V_f}{2}\\
+            &= V_i + (0.5)(\text{TIMESTEP})(a)
 \end{align}
 We define, then, a kernel which will advance the velocity of a particle by half of what it should be given the current acceleration. Shown below is the kernel which computes this.
 Interleaved within the half velocity updates, we compute the new position of the bodies. Then, one more half velocity addition is completed to bring the particle up to its final velocity for the timestep. Finally, the new accelerations based on the new particle positions are calculated. Figure \ref{fig:GPUBruteForceAlg} shows this interleaving process in more detail.
-
 %HALF VELOCITY:
 \begin{algorithm}
     \label{alg:HalfVelocity}
@@ -114,9 +125,9 @@ Interleaved within the half velocity updates, we compute the new position of the
     \begin{algorithmic}
         \ForAll{P in Particles} in parallel
             \State $dtHalf \gets 0.5 * \text{TIMESTEP}$
-            \State $P.vx \gets \text{mad}(dtHalf, P.ax, P.vx)$
-            \State $P.vy \gets \text{mad}(dtHalf, P.ay, P.vy)$
-            \State $P.vz \gets \text{mad}(dtHalf, P.az, P.vz)$
+            \State $P.vx \gets \text{MAD}(dtHalf, P.ax, P.vx)$
+            \State $P.vy \gets \text{MAD}(dtHalf, P.ay, P.vy)$
+            \State $P.vz \gets \text{MAD}(dtHalf, P.az, P.vz)$
         \EndFor
     \end{algorithmic}
 \end{algorithm}
@@ -126,25 +137,18 @@ Interleaved within the half velocity updates, we compute the new position of the
     \caption{Position update algorithm}
     \begin{algorithmic}
         \ForAll{P in Particles} in parallel
-            \State $P.x \gets \text{mad}(\text{TIMESTEP}, P.vx, P.x)$
-            \State $P.y \gets \text{mad}(\text{TIMESTEP}, P.vy, P.y)$
-            \State $P.z \gets \text{mad}(\text{TIMESTEP}, P.vz, P.z)$
+            \State $P.x \gets \text{MAD}(\text{TIMESTEP}, P.vx, P.x)$
+            \State $P.y \gets \text{MAD}(\text{TIMESTEP}, P.vy, P.y)$
+            \State $P.z \gets \text{MAD}(\text{TIMESTEP}, P.vz, P.z)$
         \EndFor
     \end{algorithmic}
 \end{algorithm}
-% \begin{figure}[h]
-%     \caption{This is a placeholder figure and caption.}
-%     \label{fig:IntegrationInterleaving}
-%     \centering
-%     \includegraphics[width=15cm]{testFigure}
-% \end{figure}
-%-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
-\section{Performance}
-Performance of the brute force algorithm is $O\left(\left(\frac{N}{P}\right)^2\right)$ where $N$ is the number of bodies in a simulation, and $P$ is the number of available processors. Shown in Table \ref{tab:BruteForcePerformance} and Figure \ref{fig:BruteForcePerformance} we compare the performance of the GPU and CPU brute force algorithms measured by time to complete 1000 simulation timesteps. The CPU used was an Intel quad-core i5, and the GPU was an NVS 5400M with 96 available CUDA cores.
+\subsection{Performance}
+Performance of the brute force algorithm is $O\left(\left(\frac{N}{P}\right)^2\right)$ where $N$ is the number of bodies in a simulation, and $P$ is the number of available processors. Shown in Table \ref{tab:BruteForcePerformance} and Figure \ref{fig:BruteForcePerformance} we compare the performance of the GPU and CPU brute force algorithms measured by time to complete 1000 simulation timesteps. The CPU used was an dual-core Intel i5 with 4 available threads, and the GPU was an NVS 5400M with 96 available CUDA cores.
 \begin{table}
     \centering
-    \label{tab:BruteForcePerformance}
     \caption{Brute Force algorithm performance comparison between CPU and GPU.}
+    \label{tab:BruteForcePerformance}
     \begin{tabular}{|c|||c||c|}
         \hline
         \multicolumn{3}{|c|}{Time to Complete 1000 Simulation Timesteps (s)}\\
@@ -159,7 +163,7 @@ Performance of the brute force algorithm is $O\left(\left(\frac{N}{P}\right)^2\r
     \end{tabular}
 \end{table}
 \begin{figure}[t]
-    \caption{Brute Force algorithm performance comparison between CPU and GPU.}
+    \caption{Brute Force algorithm performance comparison between CPU and GPU}
     \label{fig:BruteForcePerformance}
     \centering
     \includegraphics[width=15cm]{BruteForcePerformance}
@@ -167,8 +171,8 @@ Performance of the brute force algorithm is $O\left(\left(\frac{N}{P}\right)^2\r
 As expected, the GPU shows $O(N^2)$ performance with a flatter curve than the CPU due to the higher number of available cores.
 %------------------------------------------------------------------
 \section{Treecode GPU N-Body}
-The most difficult part of implementation of parallel treecode on the GPU is construction of the octree in parallel. Since most GPUs do not support recursive function calls, a complete paradigm shift is required. The algorithm for parallel tree construction is used from \cite{karras:2012}. While Karras et al. only discuss binary tree construction in depth, it is still useful for creation of an octree in parallel. The construction of the octree can be broken down into nine steps. Shown in Figure \ref{fig:GPUTreecodeAlg} is a flowchart diagramming the Treecode GPU algorithm.
-\begin{enumerate}
+The most difficult part of implementation of parallel treecode on the GPU is construction of the octree in parallel. Since most GPUs do not support recursive function calls, a complete paradigm shift is required. The algorithm for parallel tree construction is used from \cite{karras:2012}. While Karras et al. only discuss binary tree construction in depth, it is still useful for creation of an octree in parallel. The construction of the octree can be broken down into nine steps:
+\begin{enumerate}[noitemsep]
     \item Compute bounding box of simulation space
     \item Encode all particle locations by a 30-bit Morton code
     \item Sort all particles based on 30-bit Morton code.
@@ -176,16 +180,18 @@ The most difficult part of implementation of parallel treecode on the GPU is con
     \item Allocate octree nodes.
     \item Link octree nodes.
     \item Calculate node statistics.
-    \item Thread octree nodes with next and more pointers to make force calculations faster.
+    \item Thread octree nodes with next and more pointers.
 \end{enumerate}
+Shown in Figure \ref{fig:GPUTreecodeAlg} is a flowchart diagramming the Treecode GPU algorithm.
+
 Once the tree has been constructed, force calculation occurs just like it would on the CPU, except each particle belongs to its own thread. By maximixing the amount of parallelizability, we ensure that the GPU maintains a high level of utilization, and we don't waste GPU resources. The entire GPU tree construction algorithm then becomes:
-\begin{enumerate}
+\begin{enumerate}[noitemsep]
     \item Tree Construction
     \item Force Calculation
     \item Integration
 \end{enumerate}
 \begin{figure}[h]
-    \caption{Treecode algorithm flowchart showing showing computational process between GPU and CPU.}
+    \caption{Treecode algorithm flowchart showing showing computational process between GPU and CPU}
     \label{fig:GPUTreecodeAlg}
     \centering
     \includegraphics[width=15cm]{treecodeAlgorithmFlowchart}
@@ -411,7 +417,7 @@ Once the tree has been threaded, it is now time to perform force calculations. E
 %------------------------------------------------------------------
 \subsubsection{Integration}
 Integration follows the same four step procedure as the brute force algorithm
-\begin{enumerate}
+\begin{enumerate}[noitemsep]
     \item Advance Half Velocity
     \item Advance Position
     \item Calculate Force
@@ -437,7 +443,7 @@ In fact, the only difference between the Brute Force GPU algorithm and the Treec
 %- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 \subsection{Statistical}
 \begin{figure}[h]
-    \caption{Statistical comparison between Brute Force GPU and CPU algorithms. Simulation run with 4096 bodies for 10,000 timesteps.}
+    \caption{Statistical comparison between Brute Force GPU and CPU algorithms. Simulation run with 4096 bodies for 10,000 timesteps}
     \label{fig:test}
     \centering
     \includegraphics[width=15cm]{4096Bodies10kTimestep}
@@ -476,14 +482,35 @@ Let's make it very long so it takes more than one line.
 %%%%%%%%%%%%%%%%%%%%%%%  For Appendices  %%%%%%%%%%%%%%%%%%%
 \appendix    % This command is used only once!
 \addtocontents{toc}{\parindent0pt\vskip12pt APPENDICES} %toc entry, no page #
-\chapter{THIS IS AN APPENDIX}
-Note the numbering of the chapter heading is changed.
-This is a sentence to take up space and look like text.
-\section{A Section Heading}
-This is how equations are numbered in an appendix:
-\begin{equation}
-x^2 + y^2 = z^2
-\end{equation} 
+\chapter{CONSTANTS AND FUNCTIONS}
+\begin{table}[!h]
+    \centering
+    \caption{Table of constants used in algorithms}
+    \label{tab:Constants}
+    \begin{tabular}{|p{3cm}|p{10cm}|}
+        \hline
+        Constant & Description \\
+        \hline\hline
+        EPS2 & Softening parameter used to prevent singularities when particles are extremely close.\\
+        \hline
+        TIMESTEP & Delta T for one step of the simulation.\\
+        \hline
+    \end{tabular}
+\end{table}
+\begin{table}[!h]
+    \centering
+    \caption{Table of functions used in algorithms}
+    \label{tab:Functions}
+    \begin{tabular}{|p{3cm}|p{10cm}|}
+        \hline
+        Function & Description \\
+        \hline\hline
+        CLZ(a, b) & Count Leading Zeroes function, counts the number of leading zeroes starting with the MSB of two binary numbers.\\
+        \hline
+        MAD(a, b, c) & Fused Multiply Add GPU function. First two arguments are multiplied, and the third argument is added after multiplication. Equivalent to $a \cdot b + c$.\\
+        \hline
+    \end{tabular}
+\end{table}
 
 % %==================================================================
 % \chapter{THIS IS ANOTHER APPENDIX}
