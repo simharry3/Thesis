@@ -177,8 +177,8 @@ The most difficult part of implementation of parallel treecode on the GPU is con
     \item Encode all particle locations by a 30-bit Morton code
     \item Sort all particles based on 30-bit Morton code.
     \item Construct a binary radix tree.
-    \item Allocate octree nodes.
-    \item Link octree nodes.
+    \item Generate octree nodes.
+    \item Link octree nodes to particles.
     \item Calculate node statistics.
     \item Thread octree nodes with next and more pointers.
 \end{enumerate}
@@ -198,7 +198,7 @@ Once the tree has been constructed, force calculation occurs just like it would 
 \end{figure}
 \subsection{Implementation}
 \subsubsection{Bounding Box}
-To begin, we musit first compute a bounding box of the simulation space. This reduces to a parallel reduction opertion to find the minimum and maximum of three dimensions. To do this, all of particles positions are loaded into two arrays for each dimension, one for minumum and one for maximum. Any extra array slots caused by an effective n-body count which is higher than the total n-body count is filled with \verb|DBL_MAX| for the minimum array, and \verb|-DBL_MAX| for the maximum array. A parallel comparitive reduction is then performed on each of these six arrays in order to produce a minimum and maximum bound for each dimension. Shown below is the general process of the parallel reduction bounding box algorithm:
+To begin, we musit first compute a bounding box of the simulation space. This reduces to a parallel reduction opertion to find the minimum and maximum of three dimensions. To do this, all of particles positions are loaded into two arrays for each dimension, one for minumum and one for maximum. Any extra array slots caused by an effective n-body count which is higher than the total n-body count is filled with \verb|DBL_MAX| for the minimum array, and \verb|-DBL_MAX| for the maximum array. A parallel comparitive reduction is then performed on each of these six arrays in order to produce a minimum and maximum bound for each dimension. Shown in \ref{alg:BoundingBox} is the general outline of how the simulation bounds are calculated. 
 \begin{algorithm}
     \label{alg:BoundingBox}
     \caption{Bounding Box algorithm}
@@ -211,7 +211,7 @@ To begin, we musit first compute a bounding box of the simulation space. This re
 \end{algorithm}
 %------------------------------------------------------------------
 \subsubsection{Position Encoding}
-Once the bounding values of the simulation space have been calculated, we are able to encode each particle's location within the bounding box with a 30-bit morton code, which tells us where along a space-filling z-order curve each particle lands. The deterministic nature of collapsing three dimensions into one dimension using this curve allows us to keep local particles near eachother in the tree. The algorithm for position encoding is as follows:
+Once the bounding values of the simulation space have been calculated, we are able to encode each particle's location within the bounding box with a 30-bit morton code, which tells us where along a space-filling z-order curve each particle lands. The deterministic nature of collapsing three dimensions into one dimension using this curve allows us to keep local particles near eachother in the tree, while still being able to perform sorting functions. The algorithm for position encoding is as follows:
 \begin{algorithm}
     \label{alg:PositionEncoding}
     \caption{Morton encoding algorithm}
@@ -220,6 +220,8 @@ Once the bounding values of the simulation space have been calculated, we are ab
         \EndFor
     \end{algorithmic}
 \end{algorithm}
+
+Since a Z-Order curve is an integer path, and we only have 30 bits of resolution, certain distributions of particles will cause a collision when two or more particles are very close together. Fortunately, the tree threading step allows us to efficiently resolve this problem, in full parallel by taking advantage of some of the properties of both threading and distribution of sorted particles.
 %------------------------------------------------------------------
 \subsubsection{Particle Sort}
 Now that morton codes have been obtained for each particle, we are able to sort the one dimensional array of particles while still preserving particle locality. To do this, we implement a bitonic sorting algorithm. Bitonic sort was selected as it is easily parallelized, and is agnostic to the underlying structure of particles it is sorting. Bitonic sort will take the same amount of time no matter how sorted or scrambled the items it is sorting are.
@@ -243,10 +245,23 @@ We are now ready to begin tree construction as outlined in \cite{Karas:2012}. Fo
     \end{algorithmic}
 \end{algorithm}
 %------------------------------------------------------------------
-\subsubsection{Octree Node Allocation}
+\subsubsection{Octree Node Generation}
 We now have a complete hierarchy of particles in the simulation based on their 30-bit morton code. However, as this is a spacial 3d simulation, it would instead be beneficial to place these particles in an octree. Unlike the binary tree, which should have full occupancy, it is unknown how many octree nodes we will need. To begin, we must first examine the binary tree and determine how many octree nodes each binary tree node will contribute to the final structure.
 
-Once we know how many octree nodes will be contributed by each binary tree node, we perform an inclusive parallel prefix sum to compute the offset array. As the root node 
+Once we know how many octree nodes will be contributed by each binary tree node, we perform an inclusive parallel prefix sum to compute the offset array. 
+
+It is important to note that while we do calculate the number of needed octree nodes at each step, we do not perform any memory allocation. At the beginning of the simulation, before data is ever pushed into GPU buffers, we allocate a single array of size $2\times \text{EFFNBODY}$. The first half of this array contains all of our bodies, and the second half contains all of our octree nodes. Since we have no idea how many octree nodes will be needed at any given step of the simulation, we allocate the second half of the buffer to be of size $\text{EFFNBODY}$ as the number of octree nodes will never exceed this value. 
+
+Now that we know the index of each octree node, the final step is to perform an incomplete linking of the tree. That is, we will connect all octree nodes in the proper hierarchy, in preperation to link to the particles.
+
+Before we generate a hierarchy, we must first compute some basic information about each node, like the \text{PREFIX} and \text{TREELEVEL}. A node's \text{TREELEVEL} is the level in the tree which the node resides. For example, the root node will reside at level 0, and the maximum level of the tree is 10. The \text{TREELEVEL} is computed by examining the \text{DELTA} of the binary tree which contributed this octree node to the structure. The level of the octree node is given by $\text{DELTA}/3$. A node's \text{PREFIX} is the partial morton code which that node spans at its level in the tree. The \text{PREFIX} is calculated by shifting the contributing binary tree node's morton code to the right by $3 * \text{TREELEVEL}$ bits.  
+
+The easiest hierarchy to calculate is for binary nodes which contribute more than one node to the octree. We iterate over the number of nodes which will be contributed, stepping sequentially through the list of octree nodes, starting at the index given by the offset array. The prefix of each child will be three digits longer than the prefix of its parent, and the location of the node in the parent's child array is determined by this extra chunk. Figure (MULTI NODE GENERATION) shows this process in more detail.
+
+We now have both single unattached nodes, and disconnected "threads" of nodes which need to be linked to the overall hierarchy. To determine the parent node we must inspect the binary tree. We start at the binary tree node which contributed the octree node to the octree. We then follow the parents of this node up the tree, until we reach another binary node which has contributed a node to the octree. This node is then the parent of the node we wish to link. We must take care, however, as an octree "thread" may be the parent of another node, so we must offset our found parent index by the number of nodes contributed by the found parent. Since octree "threads" are contiguous in memory, we can simply offset our index by the found parent's contribution to the tree. Figure (OCTREE GENERATION) shows this process in more detail.
+
+%TODO: ADD FIGURE MULTI NODE GENERATION
+%TODO: ADD FIGURE OCTREE GENERATION
 
 %Binary Tree Contributions
 \begin{algorithm}
@@ -365,8 +380,11 @@ Finally, we return the original node counts from their buffer to make the prefix
 \end{algorithm}
 
 %------------------------------------------------------------------
-\subsubsection{Octree Hierarchy Generation}
-We now have an incompletely linked octree. In the final step of octree construction, we must complete the parent-child links of the tree, so that the structure can be followed during force calculation. Each node in the octree makes note of how many particle children it has, and an index of the first child, as the children in the particle array will be contiguous. 
+\subsubsection{Octree Linking}
+We now have an incompletely linked octree. In the final step of octree construction, we must complete the node-body relations in the tree. In parallel, we descend the tree based on each particle's Morton code. Once we can no longer descend the tree, we place the particle in the appropriate child slot of the final node. Figure (TREE DESCENT) shows the descent process of one particle in the tree. In this step we also take our first steps towards dealing with duplicate morton codes by only linking the leftmost child into the octree. Since the particles are sorted by morton code, we know that if we have a particle whose morton code does not match the particle to its left, then we either have a normal particle, or the leftmost of a group of matching-code particles. Figure (MORTON COLLISION LINKING) shows an example of this condition.
+
+% TODO: ADD FIGURE TREE DESCENT
+% TODO: ADD FIGURE MORTON COLLISION LINKING
 
 \begin{algorithm}
     \label{alg:LinkOctree}
@@ -392,6 +410,9 @@ We now have an incompletely linked octree. In the final step of octree construct
 %------------------------------------------------------------------
 \subsubsection{Octree Node Statistics}
 Once we have completed our octree hierarchy of particles, we are able to perform the first calculations on the structure. For each node in the octree, we must determine both the center of mass, and the total mass enclosed. To do so, we compute the range of the octree node just like we did in binary tree construction, and then serially compute the center of mass and mass enclosed using each of the contained particles. The rationale behind serial computation is that we reduce the potential addition of floating point error.
+
+During the Node Statistics step, we will also perform necessary calculations such as determining the critical radius of each node, and the quad-pole expansion of each node, which will be used during treecode force calculation, should we choose not to run an exact simulation.
+
 \begin{algorithm}
     \label{alg:OctreeNodeStats}
     \caption{Octree node statistics algorithm}
@@ -403,6 +424,11 @@ Once we have completed our octree hierarchy of particles, we are able to perform
 %------------------------------------------------------------------
 \subsubsection{Octree Threading}
 To reduce the required memory for octree storage, we thread the octree with \verb|NEXT| and \verb|MORE| indices. First, each node is assigned a thread on the GPU. Then, in parallel, each thread selects their left most child as the location of the \verb|MORE| index. The \verb|NEXT| index is then selected by examination of the parent hierarchy, and the location of the node within the parent nodes's child array. First, the parent node is selected. Next, starting at the location of the child assigned to the thread, the parent node's children array is scanned to the right for the next child. If a child is found before the end of the array, then that child's index is assigned as the next index for the original child node. Should the end of the array be reached before another child has been found, we must ascend to the next level of the tree and repeat the process. Should the root node of the tree be reached, and no right hand child be found, we descend the leftmost branch of the tree to a level of \verb|TREELEVEL - 1| and assign that node's index to the origninal child's next index where \verb|TREELEVEL| is the tree level of the original child node.
+
+Morton code collisions are also dealt with in this step. Particles with morton codes which collide are not added to the tree, however we can take advantage of the fact that in a sorted list, all objects with the same morton code will be placed next to eachother. During tree linking, the leftmost object is attached to the tree. Since this object is already attached, the more index of its parent will be computed normally. The difference, however, is that for any object that shares a Morton code with its rightmost neighbor, its rightmost neighbor's index will be used as that particle's next index. Should a particle not share a morton code with its rightmost neighbor, we know that we have either a non-collided body, or that we have reached the end of the collided morton codes. By computing the next and more pointers this way, we avoid having to do any special handling of duplicate morton codes during tree construction, and since these calculations are both independent, and close in memory space, it parallelizes very well. Figure (OCTREE THREADING) shows this process in more detail.
+
+% TODO: ADD FIGURE OCTREE THREADING
+
 \begin{algorithm}
     \label{alg:OctreeThreading}
     \caption{Octree threading algorithm}
@@ -413,7 +439,7 @@ To reduce the required memory for octree storage, we thread the octree with \ver
 \end{algorithm}
 %------------------------------------------------------------------
 \subsubsection{Force Calculation}
-Once the tree has been threaded, it is now time to perform force calculations. Each leaf (particle) node is assigned a thread. Forces are then calculated as the thread follows the next pointer in the tree. Should an internal node be far enough away from the original particle, the center of mass of that node is used rather than calculating the forces to all particles within the system. Should the node not meet this criteria, the \verb|MORE| index is followed to a tree depth which meets this criteria, at which point the \verb|NEXT| index will be followed, and forces calculated like usual.
+Once the tree has been threaded, it is now time to perform force calculations. Each leaf (particle) node is assigned a thread. All threads then start at the root node, and follow the next and more pointers through the tree, calculating the forces enacted by either a cell's center of mass, or an individual particle. Should an internal node be far enough away from the original particle, the center of mass of that node is used rather than calculating the forces to all particles within the system. Should the node not meet this criteria, the \verb|MORE| index is followed to a tree depth which meets this criteria, at which point the \verb|NEXT| index will be followed, and forces calculated like usual.
 %------------------------------------------------------------------
 \subsubsection{Integration}
 Integration follows the same four step procedure as the brute force algorithm
@@ -423,7 +449,7 @@ Integration follows the same four step procedure as the brute force algorithm
     \item Calculate Force
     \item Advance Half Velocity
 \end{enumerate}
-In fact, the only difference between the Brute Force GPU algorithm and the Treecode GPU algorithm are how the forces are calculated. 
+In fact, the only difference between the Brute Force GPU algorithm and the Treecode GPU algorithm are how the forces are calculated. Before the integration step, we dump all the body struct information back out to the individualized memory buffers that the brute force algorithm uses, as having individual values next to eachother in memory will improve simulation performance. 
 %==================================================================
 \chapter{RESULTS}
 %------------------------------------------------------------------
@@ -461,9 +487,11 @@ In fact, the only difference between the Brute Force GPU algorithm and the Treec
 \chapter{FUTURE WORK}
 While much has been accomplished at the time of the writing of this paper, there are still a few more things which need to be completed before the project is completed.
 
-\section{MW@HOME Integration}
-\section{Optimization}
-\section{Documentation}
+\section{Multipole expansion for cell opening criterion}
+\section{Removal of dummy bodies from tree}
+\section{Replacement of Bitonic sort with Radix sort}
+\section{Reduction of GPU memory by reducing binary and octree buffer size}
+
 
 %==================================================================
 % The following produces a numbered bibliography where the numbers
