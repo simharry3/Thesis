@@ -63,11 +63,14 @@ Presentation of an efficient GPU based N-Body algorithm for use on the MilkyWay@
 %==================================================================
 \chapter{INTRODUCTION}
 \section{MilkyWay@Home}
-MilkyWay@Home is a large-scale distributed parameter fitting project run on the BOINC network. Currently, over 20,000 users volunteer their compute time towards the project, putting our network at just under one TFLOPS of total computing performance.  One focus of the project is computation of N-Body simulations on said volunteer computers. Because we depend on volunteer time to run computations, it is important to run as efficiently as possible on volunteered time. To this end, we currently employ a Barnes-Hut treecode algorithm on the CPU in order to streamline CPU efficiency. With the onset of consumer grade GPUs, however, many volunteer computers have a GPU which is currently unutilized by MilkyWay@Home N-Body.
+MilkyWay@Home is a large-scale distributed parameter fitting project run on the BOINC network. Currently, over 20,000 users volunteer their compute time towards the project, putting our network at just under one TFLOPS of total computing performance.  One focus of the project is computation of N-Body simulations on said volunteer computers. Because we depend on volunteer time to run computations, it is important to run as efficiently as possible on volunteered time. To this end, we currently employ Barnes-Hut and Fast Multipole Method algorithms on the CPU in order to streamline CPU efficiency. With the onset of consumer grade GPUs, however, many volunteer computers have a GPU which is currently unutilized by MilkyWay@Home N-Body.
 \section{GPU Computing}
 A Graphics Processing Unit (GPU) is a major component of modern computing device. Run alongside the Central Processing Unit (CPU) the GPU is a massively parallel processor that performs many display-related computations. With the onset of modern APIs to access the GPU such as OpenCL, and the increase in floating point hardware available, it is possible to use this device to parallelize scientific computations such as the gravitational N-body problem. Over the last decade, the availibility of GPU devices on consumer computers has increased (INSERT CITATION). In addition to increased availability, the processing power available on these devices has increased (INSERT CITATION).
+\section{OpenCL}
+MilkyWay@Home runs on volunteer computing power. As such, we must employ software that can be distributed to as many machines as possible. To this end, we utilize OpenCL to access graphics cards, as OpenCL is capable of running on both NVIDIA and AMD graphics cards. OpenCL provides a language similar to C called OpenCL C, and allows relatively easy access to hardware resources such as GPUs. Functions to be run on the compute device, called "kernels", are written in OpenCL C, and put in a seperate file which is then compiled at runtime for the user. OpenCL is compiled Just In Time (JIT) on the user's machine in order to fully account for any combination of hardware the user might have at runtime. This allows us to distribute one version of the code, which will be able to run across many different hardware configurations.
 \section{Barnes Hut N-Body}
-The Barnes Hut N-Body algorithm (Hut et al. DATE) is an approximation of the brute-force N-Body simulation using a subdivided simulation space which is stored in a tree. For two dimensional simulations, this corresponds to a quadtree, and for three dimensional simulations this corresponds to an octree. During the simulation, particles walk the tree, computing forces as the tree is scanned starting from the root. Hut et al. propose that if a cell, containing multiple bodies, is far enough away from the body we are currently computing forces to, then we can forgo descending the tree farther, and instead calculate the forces to that cell, using the mass enclosed, center of mass, and for a more accurate simulation the multipole expansion of the particles contained within that cell.
+The Barnes Hut N-Body algorithm (Hut et al. DATE) is an approximation of the brute-force N-Body simulation using a subdivided simulation space which is stored in a tree. For two dimensional simulations, this corresponds to a quadtree, and for three dimensional simulations this corresponds to an octree. During the simulation, particles walk the tree, computing forces as the tree is scanned starting from the root. Hut et al. propose that if a cell, containing multiple bodies, is far enough away from the body we are currently computing forces to, then we can forgo descending the tree farther, and instead calculate the forces to that cell, using the mass enclosed, center of mass.
+\section{Fast Multipole Method}
 %==================================================================
 \chapter{METHODS}
 \section{Brute Force CPU N-Body}
@@ -269,7 +272,7 @@ The \text{SPLIT} is found by finding the highest order differing bit between the
 
 During tree construction we also calculate node deltas, which will be used during octree construction to determine the number of octree nodes each binary tree node contributes to the octree. The $\delta$ of a node is found by performing a \text{CLZ} on the \text{XOR} of the two morton codes bordering the split.
 \begin{align}
-    \delta &= \text{CLZ}(\text{mCode[split]} \text{ XOR } \text{mCode[split + 1]})
+    \delta &= \text{CLZ}(\text{mCode[SPLIT]} \text{ XOR } \text{mCode[SPLIT + 1]})
 \end{align}
 This gives us the number of matching elements starting from the MSB, and can be used to determine the node's depth in a quad/octree.
 
@@ -297,7 +300,7 @@ It is important to note that while we do calculate the number of needed octree n
 
 Now that we know the index of each octree node, the final step is to perform an incomplete linking of the tree. That is, we will connect all octree nodes in the proper hierarchy, in preperation to link to the particles.
 
-Before we generate a hierarchy, we must first compute some basic information about each node, like the \text{PREFIX} and \text{TREELEVEL}. A node's \text{TREELEVEL} is the level in the tree which the node resides. For example, the root node will reside at level 0, and the maximum level of the tree is 10. The \text{TREELEVEL} is computed by examining the $\delta$ of the binary tree which contributed this octree node to the structure. The level of the octree node is given by $\delta/3$. A node's \text{PREFIX} is the partial morton code which that node spans at its level in the tree. The \text{PREFIX} is calculated by shifting the contributing binary tree node's morton code to the right by $\text{BPL} * \text{TREELEVEL}$ bits.  
+Before we generate a hierarchy, we must first compute some basic information about each node, like the \text{PREFIX} and \text{TREELEVEL}. A node's \text{TREELEVEL} is the level in the tree which the node resides. For example, the root node will reside at level 0, and the maximum level of the tree is 10. The \text{TREELEVEL} is computed by examining the $\delta$ of the binary tree which contributed this octree node to the structure. The level of the octree node is given by $\delta/3$. A node's \text{PREFIX} is the partial morton code which that node spans at its level in the tree. The \text{PREFIX} is calculated by shifting the contributing binary tree node's morton code to the right by $\text{BPL} \times \text{TREELEVEL}$ bits.  
 
 Using the offset array, and the basic information we have calculated, we are ready to begin generating an octree hierarcy. One special case we must consider is when a binary tree node contributes more than one octree node to the octree. In this case, we iterate over the number of nodes which will be contributed, stepping sequentially through the list of octree nodes, starting at the index given by the offset array, as these "strands" of octree nodes will be located contiguously in memory. The prefix of each child will be \text{BPL} digits longer than the prefix of its parent, and the location of the node in the parent's child array is determined by this extra chunk.
 
@@ -492,45 +495,34 @@ Integration follows the same four step procedure as the brute force algorithm
 In fact, the only difference between the brute force GPU algorithm and the Treecode GPU algorithm is how the forces are calculated. Before the integration step, we return all the body node information back to the individualized memory buffers that the brute force algorithm uses, as having individual values next to eachother in memory will improve performance, and prevents us from having to initialize additional kernels.
 %==================================================================
 \chapter{RESULTS}
-%------------------------------------------------------------------
-\section{CPU N-Body}
 %- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+\section{Statistical}
 \subsection{Brute Force}
-%- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-\subsection{Treecode}
-%------------------------------------------------------------------
-\section{GPU N-Body}
-%- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-\subsection{Brute Force}
-%- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-\subsection{Treecode}
-%------------------------------------------------------------------
-\section{Performance Comparison}
-%- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-\subsection{Statistical}
+To compare the statistical performance of the brute force simulation, 4096 bodies were run for 10,000 timesteps in a potential well using the same random seed between both the GPU and CPU. The results of this are shown in Figure \ref{fig:BruteForceStats}. 
 \begin{figure}[h]
     \caption{Statistical comparison between Brute Force GPU and CPU algorithms. Simulation run with 4096 bodies for 10,000 timesteps}
-    \label{fig:test}
+    \label{fig:BruteForceStats}
     \centering
     \includegraphics[width=15cm]{4096Bodies10kTimestep}
 \end{figure}
-%- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-\subsection{Performance}
-% \begin{figure}[h]
-%     \caption{Brute Force algorithm performance comparison between CPU and GPU}
-%     \label{fig:BruteForcePerformance}
-%     \centering
-%     \includegraphics[width=15cm]{BruteForcePerformance}
-% \end{figure}
 
+\subsection{Treecode}
+%- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+\section{Performance}
+\subsection{Brute Force}
+\subsection{Treecode}
 %==================================================================
 \chapter{FUTURE WORK}
 While much has been accomplished at the time of the writing of this paper, there are still a few more things which need to be completed before the project is completed.
 
-\section{Multipole expansion for cell opening criterion}
-\section{Removal of dummy bodies from tree}
+\section{Fast Multipole Method}
+While Barnes Hut is a step in the right direction, the Fast Multipole Method, first proposed by [INSERT CITATION] provides an even better performance benefit. Fortunately, FMM can utilize the same tree structure, meaning that the majority of the work so far has actually been towards implementation of FMM. Barnes-Hut is an easy checkpoint to prove that the tree is calculated properly.
+
 \section{Checkpointing for simulation safety}
+An important aspect of running large-scale, and especially lengthy simulations is the process of checkpointing. Before GPU N-Body can be released to the volunteer network, checkpointing must be implemented. Because the network uses all volunteer computing power, checkpointing plays an even more important role, as we do not know the condition of the machines we are running on. To implement checkpointing without inducing too much additional load on the GPU, we can take advantage of the fact that openCL uses a queue based system for running kernels. When we wish to checkpoint, we can simply periodically enqueue a blocking buffer read on the device, which will allow the host machine to read data from the device, which can then be written to a checkpoint file.
 \section{Replacement of Bitonic sort with Radix sort}
+Bitonic sort was initially chosen due to its easy parallelizability, however another sorting algorithm, Radix sort, may offer a performance benefit, as the amount of time taken for radix sort does depend on the underlying data organization. Since particles typically do not move very far in relation to their neighbors during each step of the simulation, this can provide a great performance increase to Radix.
+%https://arxiv.org/pdf/1511.03404.pdf
 \section{Reduction of GPU memory by reducing binary and octree buffer size}
 
 
@@ -666,7 +658,7 @@ Let's make it very long so it takes more than one line.
         \hline
         Function & Description \\
         \hline\hline
-        CLZ(a, b) & Count Leading Zeroes function, counts the number of leading zeroes starting with the MSB of two binary numbers.\\
+        CLZ(a) & Count Leading Zeroes function, counts the number of leading zeroes of a binary number starting with the MSB.\\
         \hline
         MAD(a, b, c) & Fused Multiply Add GPU function. First two arguments are multiplied, and the third argument is added after multiplication. Equivalent to $a \cdot b + c$.\\
         \hline
