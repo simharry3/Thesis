@@ -406,21 +406,25 @@
      \begin{center}
          \parindent=0pt
          {\large\uppercase\expandafter{\@thesistitle}}\\ [12pt]
-         By \\ [12pt]
-         \@author\\ [12pt]
-         A \doctype Submitted to the Graduate\\ [8pt]
-         Faculty of Rensselaer Polytechnic Institute\\ [8pt]
-         in Partial Fulfillment of the\\ [8pt]
-         Requirements for the Degree of\\ [8pt]
-         \uppercase\expandafter{\@degree}\\ [8pt]
-         Major Subject:~~\uppercase\expandafter{\@department}\\ 
+         {\large\textbf\@author}\\ [12pt]
+         Submitted in Partial Fulfillment of the Requirements\\
+         for the Degree of\\ [8pt]
+         \textit{MASTER OF SCIENCE}\\ [8pt]
+        %  Major Subject:~~\uppercase\expandafter{\@department}\\ 
          \ifnum\numcomm < 7 \vskip 32pt \else \vskip 24pt \fi
-         \sigblock 
-         \ifnum \numcomm < 7 \vskip 32pt \else \vskip 24pt \fi
+         Approved by:\\
+         Carlos Varela, Chair\\
+         Heidi Newberg\\
+         W. Randolph Franklin\\\vspace{4cm}
+
+         \centering\includegraphics[width=3.5cm]{rpi-seal}\\\vspace{0.5cm}
+        %  \ifnum \numcomm < 7 \vskip 32pt \else \vskip 24pt \fi
+        \textit{Department of Computer Science}\\
          Rensselaer Polytechnic Institute\\
          Troy, New York\\ [14pt]
          \ifnum\numcomm>6 \vskip -8pt \fi
-         \@submitdate
+         [May 2018]\\
+         Submitted March 2018
      \end{center}
      \end{singlespace}
      \newpage

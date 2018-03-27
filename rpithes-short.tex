@@ -18,6 +18,11 @@
 \usepackage{algpseudocode}
 \usepackage{enumitem}
 \usepackage{rotating}
+\usepackage[square]{natbib}
+\usepackage{aasmacros}
+% \setcitestyle{authoryear,open={[},close={]}}
+% \setcitationstyle{square}
+\bibliographystyle{apj}
 \setlist{nolistsep}
 \graphicspath{{figures/}}
 
@@ -29,7 +34,7 @@
                                         %   otherwise bold is default)
                                         
 %%%%%%%%%%%%%%%%%%%%  supply titlepage info  %%%%%%%%%%%%%%%%%%%%%
-\thesistitle{\bf GPU Acceleration of\\MilkyWay@Home N-Body}
+\thesistitle{\bf Performance Comparison of GPU Acceleration of\\MilkyWay@Home N-Body}
 \author{Clayton Rayment}        
 \degree{Master of Science}
 \department{Computer Science} % provide your area of study here; e.g.,
@@ -41,7 +46,7 @@
 %  For a masters project use \projadviser instead of \thadviser, 
 %  and \coprojadviser and \cocoprojadviser if needed. 
 \submitdate{March 2018\\(For Graduation May 2018)}        
-%\copyrightyear{1685}  % if date omitted, current year is used. 
+\copyrightyear{2018}  % if date omitted, current year is used. 
 %%%%%%%%%%%%%%%%%%%%%   end titlepage info  %%%%%%%%%%%%%%%%%%%%%%
       
 
@@ -49,26 +54,74 @@
 
 \begin{document} 
 \titlepage             % Print titlepage   
-%\copyrightpage        % optional         
+\copyrightpage        % optional         
 \tableofcontents       % required 
 \listoftables          % required if there are tables
 \listoffigures         % required if there are figures
+
+\specialhead{NOMENCLATURE}
+\begin{table}[!h]
+    \centering
+    \caption{\label{tab:Constants} Table of constants used in algorithms}
+    \begin{tabular}{|p{3cm}|p{10cm}|}
+        \hline
+        Constant & Description \\
+        \hline\hline
+        BPL & Bits Per Level: Required bits to encode one level of a tree structure. For quadtrees this value is two, and for octrees this value is three.\\
+        \hline
+        EFFNBODY & Total number of bodies including inserted dummy particles.\\
+        \hline
+        EPS2 & Softening parameter used to prevent singularities when particles are extremely close.\\
+        \hline
+        NBODY & Number of bodies in the simulation.\\
+        \hline
+        PREFIX & Partial Morton code used to identify the range of codes that a particular node covers.\\
+        \hline
+        RANGE & Range of particles which are contained within one node of binary tree.\\
+        \hline
+        SPLIT & Location of child indices in binary tree found using highest order differing bit in RANGE. Children located at SPLIT and SPLIT + 1.\\
+        \hline
+        TIMESTEP & Delta T for one step of the simulation.\\
+        \hline
+    \end{tabular}
+\end{table}
+\begin{table}[!h]
+    \centering
+    \caption{Table of functions used in algorithms}
+    \label{tab:Functions}
+    \begin{tabular}{|p{3cm}|p{10cm}|}
+        \hline
+        Function & Description \\
+        \hline\hline
+        CLZ(a) & Count Leading Zeroes function, counts the number of leading zeroes of a binary number starting with the MSB.\\
+        \hline
+        MAD(a, b, c) & Fused Multiply Add GPU function. First two arguments are multiplied, and the third argument is added after multiplication. Equivalent to $a \cdot b + c$.\\
+        \hline
+    \end{tabular}
+\end{table}
 
 \specialhead{ACKNOWLEDGMENT}
 This work made possible with the combined efforts of the Rensselaer Polytechnic Institute Department of Physics, Applied Physics, and Astronomy, and the Department of Computer Science.
 %==================================================================
 \specialhead{ABSTRACT}
-Presentation of an efficient GPU based N-Body octree construction algorithm for use on the MilkyWay@Home project based on parallel tree construction techniques outlined in Karras et al. 2012. Implementation of GPU based brute force and GPU based tree construction using space-filling curves is discussed. Performance analysis of CPU vs GPU brute force simulation, and CPU vs GPU tree construction. In-depth profiling analysis of GPU tree construction is performed, along with discussion on improvements to the algorithm to further increase performance.
+Presentation of an efficient GPU based N-Body octree construction algorithm for use on the MilkyWay@Home project based on parallel tree construction techniques outlined in \cite{Karras:2012}. Implementation of GPU based brute force and GPU based tree construction using space-filling curves is discussed. Performance analysis of CPU vs GPU brute force simulation, and CPU vs GPU tree construction. In-depth profiling analysis of GPU tree construction is performed, along with discussion on improvements to the algorithm to further increase performance.
 %==================================================================
 \chapter{INTRODUCTION}
+\section{Practical Uses of N-Body Simulations}
+Many practical applications of N-Body simulations exist. In this paper we focus on astronomical gravitational N-Body simulations. In particular, this will be used for dwarf galaxy tidal stream fitting in the MilkyWay@Home program. Other applications of gravitational N-Body simulations include but are not limited to the following:
+\begin{enumerate}
+    \item Sagittarius dwarf galaxy tidal debris stream fitting \citep{Law2005,Law2010}
+    \item Milky Way dark matter profiling and mass distribution \citep{Sanderson2017}
+    \item Virgo stellar stream fitting \citep{CarlinVirgo}
+\end{enumerate}
 \section{MilkyWay@Home}
-MilkyWay@Home is a large-scale distributed parameter fitting project run on the Berkley Open Infrastructure for Network Computing (BOINC). Currently, over 20,000 users volunteer their computational resources towards the project, putting our network at just under one TFLOPS of total computing performance.  One focus of the project is computation of N-Body simulations on said volunteer computers. Because we depend on volunteer time to run computations, it is important to run as efficiently as possible on volunteered time. To this end, we currently employ Barnes-Hut and Fast Multipole Method algorithms on the CPU in order to streamline CPU efficiency. With the onset of consumer grade GPUs, however, many volunteer computers have a GPU which is currently unutilized by MilkyWay@Home N-Body.
+MilkyWay@Home is a large-scale distributed parameter fitting project run on the Berkley Open Infrastructure for Network Computing (BOINC). Currently, over 20,000 users volunteer their computational resources towards the project, putting our network at just under one TFLOPS of total computing performance.  One focus of the project is computation of N-Body simulations on said volunteer computers. Because we depend on volunteer time to run computations, it is important to run as efficiently as possible on volunteered time. To this end, we currently employ Barnes-Hut and Fast Multipole Method algorithms on the CPU in order to streamline CPU efficiency. With the onset of consumer grade GPUs, however, many volunteer computers have a GPU which is currently unutilized by MilkyWay@Home N-Body. User statistics from the MilkyWay@Home database show 6800 computers from 5324 users returning successful workunits for MilkyWay@Home seperation. It is safe to assume that the vast majority of these users will run MilkyWay@Home GPU N-Body once it is released.
 \section{GPU Computing}
-A Graphics Processing Unit (GPU) is a major component of modern computing device. Run alongside the Central Processing Unit (CPU) the GPU is a massively parallel processor that performs many display-related computations. With the onset of modern APIs to access the GPU such as OpenCL, and the increase in floating point hardware available, it is possible to use this device to parallelize scientific computations such as the gravitational N-body problem. Over the last decade, the availibility of GPU devices on consumer computers has increased (INSERT CITATION). In addition to increased availability, the processing power available on these devices has increased (INSERT CITATION).
+A Graphics Processing Unit (GPU) is a major component of modern computing device. Run alongside the Central Processing Unit (CPU) the GPU is a massively parallel processor that performs many display-related computations. With the onset of modern APIs to access the GPU such as OpenCL, and the increase in floating point hardware available, it is possible to use this device to parallelize scientific computations such as the gravitational N-body problem.
 \section{OpenCL}
 MilkyWay@Home runs on volunteer computing power. As such, we must employ software that can be distributed to as many machines as possible. To this end, we utilize OpenCL to access graphics cards, as OpenCL is capable of running on both NVIDIA and AMD graphics cards. OpenCL provides a language similar to C called OpenCL C, and allows relatively easy access to hardware resources such as GPUs. Functions to be run on the compute device, called "kernels", are written in OpenCL C, and put in a seperate file which is then compiled at runtime for the user. OpenCL is compiled Just In Time (JIT) on the user's machine in order to fully account for any combination of hardware the user might have at runtime. This allows us to distribute one version of the code, which will be able to run across many different hardware configurations.
 \section{Barnes Hut N-Body}
-The Barnes Hut N-Body algorithm (Hut et al. DATE) is an $O(N\log(N))$ approximation of the brute-force N-Body simulation using a subdivided simulation space which is stored in a tree. For two dimensional simulations, this corresponds to a quadtree, and for three dimensional simulations this corresponds to an octree. During the simulation, particles walk the tree, computing forces as the tree is scanned starting from the root. Hut et al. propose that if a cell, containing multiple bodies, is far enough away from the body we are currently computing forces to, then we can forgo descending the tree farther, and instead calculate the forces to that cell, using the mass enclosed, center of mass. MilkyWay@Home uses a quadrupole moment correction to provide greater accuracy to the approximation.
+The Barnes-Hut N-Body algorithm \cite{BarnesHut:1986} is an $O(N\log(N))$ approximation of the brute-force N-Body simulation using a subdivided simulation space which is stored in a tree. For two dimensional simulations, this corresponds to a quadtree and for three dimensional simulations this corresponds to an octree. During the simulation, particles walk the tree, computing forces as the tree is scanned starting from the root. Hut et al. propose that if a cell, containing multiple bodies, is far enough away from the body we are currently computing forces to, then we can forgo descending the tree farther, and instead calculate the forces to that cell, using the mass enclosed, center of mass (COM). MilkyWay@Home uses a quadrupole moment correction to provide greater accuracy to the approximation.
 %==================================================================
 \chapter{METHODS}
 \section{Brute Force CPU N-Body}
@@ -118,8 +171,7 @@ Brute force GPU uses a parallel $O(N^2)$ algorithm where $N$ is the number of pa
 \subsubsection{Integration}
 CPU N-Body uses a half-velocity integration method. We assume constant acceleration over the timestep, which means that our average velocity will be given by:
 \begin{align}
-    V_{avg} &= V_i + \frac{V_f - V_i}{2}\\
-            &= V_i + (0.5)(\text{TIMESTEP})(a)
+    V_{avg} &= V_i + (0.5)(\text{TIMESTEP})(a)
 \end{align}
 We define, then, a kernel which will advance the velocity of a particle by half of what it should be given the current acceleration. Shown below is the kernel which computes this.
 Interleaved within the half velocity updates, we compute the new position of the bodies. Then, one more half velocity addition is completed to bring the particle up to its final velocity for the timestep. Finally, the new accelerations based on the new particle positions are calculated. Figure \ref{fig:GPUBruteForceAlg} shows this interleaving process in more detail.
@@ -148,35 +200,9 @@ Interleaved within the half velocity updates, we compute the new position of the
         \EndFor
     \end{algorithmic}
 \end{algorithm}
-\subsection{Performance}
-Performance of the brute force algorithm is $O\left(N^2/P\right)$ where $N$ is the number of bodies in a simulation and $P$ is the number of available processors. Shown in Table \ref{tab:BruteForcePerformance} and Figure \ref{fig:BruteForcePerformance} we compare the performance of the GPU and CPU brute force algorithms measured by time to complete 1000 simulation timesteps. The CPU used was a dual-core Intel i5 with 4 available threads. The GPUs used were an NVS 5400M with 96 available CUDA cores, and a GTX Titan Z with 5760 available CUDA cores.
-\begin{table}
-    \centering
-    \caption{Brute Force algorithm performance comparison between CPU and GPU.}
-    \label{tab:BruteForcePerformance}
-    \begin{tabular}{|c|||c||c|}
-        \hline
-        \multicolumn{3}{|c|}{Time to Complete 1000 Simulation Timesteps (s)}\\
-        \hline
-        Bodies & i5-3360M & NVS 5400M \\
-        \hline
-        1024 & 9 & 3\\
-        2048 & 34 & 10\\
-        4096 & 158 & 39\\
-        8192 & 743 & 168\\
-        \hline
-    \end{tabular}
-\end{table}
-\begin{figure}[t]
-    \caption{Brute Force algorithm performance comparison between CPU and GPU}
-    \label{fig:BruteForcePerformance}
-    \centering
-    \includegraphics[width=15cm]{BruteForcePerformance}
-\end{figure}
-As expected, the GPU shows $O(N^2)$ performance with a flatter curve than the CPU due to the higher number of available cores.
 %------------------------------------------------------------------
 \section{Treecode GPU N-Body}
-The most difficult part of implementation of parallel treecode on the GPU is construction of the octree in parallel. Since most GPUs do not support recursive function calls, a complete paradigm shift is required. Karras et al. propose an algorithm for parallel tree construction using Morton encoding. While Karras et al. only discuss binary tree construction in depth, they outline the process for octree construction. The construction of the octree can be broken down into the following steps:
+The most difficult part of implementation of parallel treecode on the GPU is construction of the octree in parallel. Since most GPUs do not support recursive function calls, a complete paradigm shift is required. \cite{Karras:2012} propose an algorithm for parallel tree construction using Morton encoding. While \cite{Karras:2012} only discuss binary tree construction in depth, they outline the process for octree construction. The construction of the octree can be broken down into the following steps:
 \begin{enumerate}[noitemsep]
     \item Compute bounding box of simulation space
     \item Encode all particle locations by a 30-bit Morton code
@@ -197,7 +223,7 @@ Once the tree has been constructed, force calculation occurs just like it would 
     \item Integration
 \end{enumerate}
 \begin{figure}[h]
-    \caption{Treecode algorithm flowchart showing showing computational process between GPU and CPU}
+    \caption{Treecode algorithm flowchart showing computational process between GPU and CPU}
     \label{fig:GPUTreecodeAlg}
     \centering
     \includegraphics[width=15cm]{treecodeAlgorithmFlowchart}
@@ -229,7 +255,7 @@ Once the bounding values of the simulation space have been calculated, we are ab
     \end{algorithmic}
 \end{algorithm}
 
-Since a Z-Order curve is an integer path, and we only have 30 bits of resolution, certain distributions of particles will cause a collision when two or more particles are very close together. Fortunately, the tree threading step allows us to efficiently resolve this problem, in full parallel, by taking advantage of some of the properties of both threading and distribution of sorted particles. However, before we can construct the tree, these degenerate codes must be removed from the array, which we will perform in a later step. Figure \ref{fig:mortonCurve} shows an example z-order curve at 6 bits of resolution on a quadtree, giving us 3 levels of depth. Note how if the maximum depth is reached, but two particles fall within the same cell, we will create degenerate codes.
+Since a Z-Order curve is an integer path, and we only have 30 bits of resolution, certain distributions of particles will cause a collision when two or more particles are very close together. Fortunately, the tree threading step allows us to efficiently resolve this problem, in full parallel, by taking advantage of some of the properties of both threading and distribution of sorted particles. However, before we can construct the tree, these degenerate codes must be removed from the array, which we will perform in a later step. Figure \ref{fig:MortonCurve} shows an example z-order curve at 6 bits of resolution on a quadtree, giving us 3 levels of depth. Note how if the maximum depth is reached, but two particles fall within the same cell, we will create degenerate codes.
 
 Since encodeLocation() is an O(1) process, the entire running time of this algorithm becomes O(N/P).
 
@@ -239,17 +265,17 @@ Since encodeLocation() is an O(1) process, the entire running time of this algor
 \subsubsection{Particle Sort}
 Now that  Morton codes have been obtained for each particle, we would like to sort the one dimensional array of encoded particles in order to effectively examine the hierarchy of codes. To do this, we implement a bitonic sorting algorithm as it is easily parallelized, and is agnostic to the underlying structure of particles it is sorting.
 
-We sort using the 30-bit  Morton code as a key to arrange all of the other data arrays. Once we have completed bitonic sort, we are left with arrays of particles and data, which will be near their neighbors in the simulation. Degenerate  Morton codes will be located contiguously in the array, since they all share a  Morton code, which will help us later on to deal with these encoding collisions. Figure \ref{fig:bitonicSortResult} shows how data are keyed by  Morton code and sorted.
+We sort using the 30-bit  Morton code as a key to arrange all of the other data arrays. Once we have completed bitonic sort, we are left with arrays of particles and data, which will be near their neighbors in the simulation. Degenerate  Morton codes will be located contiguously in the array, since they all share a  Morton code, which will help us later on to deal with these encoding collisions. Figure \ref{fig:BitonicSortResult} shows how data are keyed by  Morton code and sorted.
 % FIGURE: Bitonic Morton Sort
 
-\begin{algorithm}
-    \label{alg:BitonicParticleSort}
-    \caption{Bitonic particle sorting algorithm}
-    \begin{algorithmic}
-        \For{$i < \lceil \log_2(\text{EFFNBODY})\rceil$}
-        \EndFor
-    \end{algorithmic}
-\end{algorithm}
+% \begin{algorithm}
+%     \label{alg:BitonicParticleSort}
+%     \caption{Bitonic particle sorting algorithm}
+%     \begin{algorithmic}
+%         \For{$i < \lceil \log_2(\text{EFFNBODY})\rceil$}
+%         \EndFor
+%     \end{algorithmic}
+% \end{algorithm}
 %------------------------------------------------------------------
 \subsubsection{Body Creation}
 In order to link bodies to the tree, and to preserve degenerate particle information before compaction, we fill leaf nodes with the data from the vectorized particle data. This is performed in a single kernel call and also allows us to remove any dummy bodies from the simulation before we construct the tree. A buffer is allocated at the start of the simulation with size $2 \times \text{EFFNBODY}$ which stores the particles in the first half of the array and the octree in the second half.
@@ -284,7 +310,7 @@ In the final step, using the computed array of offsets, we assign $N$ threads to
 \end{algorithm}
 %------------------------------------------------------------------
 \subsubsection{Binary Tree Construction}
-We are now ready to begin tree construction as outlined in Karas et al. 2012. For a binary tree, we know that we will require N-1 as many nodes as we have particles. Before simulation, we allocate a buffer of this size on the GPU.
+We are now ready to begin tree construction as outlined in \cite{Karras:2012}. For a binary tree, we know that we will require N-1 as many nodes as we have particles. Before simulation, we allocate a buffer of this size on the GPU.
 
 The key to the creation of the binary tree in parallel is creating nodes directly in line with their corresponding  Morton code. The $\text{0}^\text{th}$ element will always be the root and all other nodes exist directly above the corresponding  Morton code. The two necessary values to compute for the hierarchy are the \texttt{RANGE} and the \texttt{SPLIT}. The \texttt{RANGE} is the range of particles which the node covers, while the \texttt{SPLIT} defines the location of the two children of the current node. 
 
@@ -303,7 +329,7 @@ Finally, we also compute the center of mass (COM) of each of the binary tree nod
 %TODO: write binary tree construction algo
 \begin{algorithm}
     \label{alg:BinaryTreeConstruction}
-    \caption{Binary tree construction algorithm}
+    \caption{Binary tree construction algorithm: $O((N \log N) / P)$}
     \begin{algorithmic}
         \For{$i < \text{COMPACTSIZE} - 1$} in parallel
             \State n $\gets$ binaryNodes[i]
@@ -345,14 +371,14 @@ Now that we know the index of each octree node, the final step is to perform an 
 
 Before we generate a hierarchy, we must first compute some basic information about each node, such as \texttt{PREFIX} and \texttt{TREELEVEL}. A node's \texttt{TREELEVEL} is the level in the tree which the node resides. For example, the root node will reside at level 0 and the maximum level of the tree is 10. The \texttt{TREELEVEL} is computed by examining the $\delta$ of the binary tree node which contributed this octree node to the structure. The level of the octree node is given by $\delta/3$. A node's \text{PREFIX} is the partial  Morton code which that node spans at its level in the tree. The \text{PREFIX} is calculated by shifting the contributing binary tree node's  Morton code to the right by \texttt{BPL} $\times$ \texttt{TREELEVEL} bits.  
 
-Using the offset array and the basic information we have calculated, we are ready to begin generating an octree hierarcy. One special case we must consider is when a binary tree node contributes more than one octree node to the octree. In this case, we iterate over the number of nodes which will be contributed, stepping sequentially through the list of octree nodes. We start at the index given by the offset array, as these "strands" of octree nodes will be located contiguously in memory. The prefix of each child will be \texttt{BPL} digits longer than the prefix of its parent, and the location of the node in the parent's child array is determined by this extra chunk.
+Using the offset array and the basic information we have calculated, we are ready to begin generating an octree hierarcy. One special case we must consider is when a binary tree node contributes more than one octree node to the octree. In this case, we iterate over the number of nodes which will be contributed, stepping sequentially through the list of octree nodes. We start at the index given by the offset array, as these strands of octree nodes will be located contiguously in memory. The prefix of each child will be \texttt{BPL} digits longer than the prefix of its parent, and the location of the node in the parent's child array is determined by this extra chunk.
 
-We now have both single unattached nodes, and disconnected strands of nodes which need to be linked to the overall hierarchy. To determine the parent of each octree node we must inspect the binary tree. We start at the binary tree node which contributed the octree node to the octree. We then follow the parents of this node up the tree, until we reach another binary node which has contributed a node to the octree. This node is then the parent of the node we wish to link. We must take care, however, as an octree strand may be the parent of another node. In this case we must offset our found parent index by the number of nodes contributed by the found parent. Since octree strands are contiguous in memory, we can simply offset our index by the found parent's contribution to the tree. Figure \ref{fig:OctreeNodeGeneration} shows the combined process of generating and linking the octree nodes based on the binary tree hierarchy.
+We now have both single unattached nodes and disconnected strands of nodes which need to be linked to the overall hierarchy. To determine the parent of each octree node we must inspect the binary tree. We start at the binary tree node which contributed the octree node to the octree. We then follow the parents of this node up the tree, until we reach another binary node which has contributed a node to the octree. This node is then the parent of the node we wish to link. We must take care, however, as an octree strand may be the parent of another node. In this case we must offset our found parent index by the number of nodes contributed by the found parent. Since octree strands are contiguous in memory, we can simply offset our index by the found parent's contribution to the tree. Figure \ref{fig:OctreeNodeGeneration} shows the combined process of generating and linking the octree nodes based on the binary tree hierarchy.
 
 % Binary Tree Contributions
 \begin{algorithm}
     \label{alg:NodeContributions}
-    \caption{Octree node contribution algorithm}
+    \caption{Octree node contribution algorithm: $O(N/P)$}
     \begin{algorithmic}
         \For{$i < \text{COMPACTSIZE} - 1$} in parallel
             \If{$i \neq 0$}
@@ -402,7 +428,7 @@ We now have both single unattached nodes, and disconnected strands of nodes whic
 %TODO: write octree generation algorithm
 \begin{algorithm}
     \label{alg:GenerateOctreeNodes}
-    \caption{Octree node generation algorithm}
+    \caption{Octree node generation algorithm: $O((N \log N)/P)$}
     \begin{algorithmic}
         \ForAll{$g < \text{COMPACTSIZE} - 1$}
             \If{$g \neq 0$}
@@ -445,7 +471,7 @@ We now have both single unattached nodes, and disconnected strands of nodes whic
         \EndFor
     \end{algorithmic}
 \end{algorithm}
-
+Octree node generation has an average running time of $O((N \log N_{Bodies}) / P)$, and a worst-case running time of $O(N \times N_{Bodies})$ should the binary tree be completely degenerate, where $N$ is the number of octree nodes, and $N_{Bodies}$ is the number of bodies in the simulation. High levels of binary tree degeneracy are impossible, however, as degenerate particles are removed from the simulation, and a completely degenrate binary tree would contain very few Morton codes. Since the Morton codes are based on the bounding box of the simulation, it is far more likely that we will have a well-distributed tree rather than a degenerate one. In parallel, each
 %------------------------------------------------------------------
 \subsubsection{Octree Linking}
 We now have an incompletely linked octree. In the final step of octree construction, we must complete the node-body relations in the tree. In parallel, we descend the tree based on each particle's Morton code. Once we can no longer descend the tree, we place the particle in the appropriate child slot of the final node. Figure \ref{fig:TreeLinking} shows the linking process of one particle in the tree. In this step we also take our first steps towards dealing with degenerate  Morton codes by only linking the leftmost degenerate child into the octree. Since the particles are sorted by  Morton code, we know that if we have a particle whose  Morton code does not match the particle to its left, then we either have a normal particle or the leftmost of a group of matching-code particles.
@@ -475,9 +501,9 @@ We now have an incompletely linked octree. In the final step of octree construct
 \end{algorithm}
 %------------------------------------------------------------------
 \subsubsection{Octree Node Statistics} %TODO: REWORK SECTION
-Once we have completed our octree hierarchy of particles, we are able to perform the first calculations on the structure. For each node in the octree, we must determine both the center of mass, and the total mass enclosed.
+Once we have completed our octree hierarchy of particles, we are able to perform the first calculations on the structure. For each node in the octree, we must determine both the center of mass and the total mass enclosed.
 
-During the Node Statistics step, we will also perform necessary calculations such as determining the critical radius of each node, and the multipole expansion of each node, which will be used during treecode force calculation, should we choose not to run an exact simulation.
+During the Node Statistics step, we will also perform necessary calculations such as determining the critical radius of each node and the multipole expansion of each node, which will be used during treecode force calculation should we choose not to run an exact simulation.
 
 These computations will be performed by sweeping up from the leaves of the tree up towards the root of the tree. To finish the multipole expansions, we will sweep back down from the root of the tree to the leaves.
 
@@ -493,7 +519,7 @@ These computations will be performed by sweeping up from the leaves of the tree 
 \subsubsection{Octree Threading}
 To reduce number of divergent operations during force calculation, and to eventually reduce the required memory for octree storage, we thread the octree with \texttt{NEXT} and \texttt{MORE} indices. First, each octree node is assigned a thread on the GPU. Then, in parallel, each thread selects their left most child as the location of the \texttt{MORE} index should that thread be assigned to an internal node. The \texttt{NEXT} index is then selected by examination of the parent hierarchy and the location of the node within the parent nodes's child array. First, the parent node is selected. Next, starting at the location of the child assigned to the thread, the parent node's children array is scanned to the right for the next child. If a child is found before the end of the array, then that child's index is assigned as the next index for the original child node. Should the end of the array be reached before another child has been found, we must ascend to the next level of the tree and repeat the process. Should the root node of the tree be reached, and no right hand child be found, we assign the root index to the \texttt{NEXT} index.
 
-Degenerate particles are also re-included with this step. Particles with  Morton codes which collide are not added to the tree. However we can take advantage of the fact that in a sorted list, all objects with the same  Morton code will be placed next to eachother. During tree linking, the leftmost object is attached to the tree. Since this object is already attached, the \texttt{MORE} index of its parent will be computed normally. The difference, however, is that for any object that shares a Morton code with its rightmost neighbor, its rightmost neighbor's index will be used as that particle's \texttt{NEXT} index. Should a particle not share a  Morton code with its rightmost neighbor, we know that we have either a non-degenerate body or that we have reached the end of the group of degenerate  Morton codes. By computing the \texttt{NEXT} and \texttt{MORE} pointers this way, we avoid having to do any special handling of duplicate  Morton codes during tree construction, while still including the bodies in the force calculation. Since these calculations are both independent and close in memory space, it parallelizes very well. Figure \ref{fig:threadedQuadtree} shows this process in more detail for a 2 dimensional quadtree, although the process is the same for an octree.
+Degenerate particles are also re-included with this step. Particles with  Morton codes which collide are not added to the tree. However we can take advantage of the fact that in a sorted list, all objects with the same  Morton code will be placed next to each other. During tree linking, the leftmost object is attached to the tree. Since this object is already attached, the \texttt{MORE} index of its parent will be computed normally. The difference, however, is that for any object that shares a Morton code with its rightmost neighbor, its rightmost neighbor's index will be used as that particle's \texttt{NEXT} index. Should a particle not share a  Morton code with its rightmost neighbor, we know that we have either a non-degenerate body or that we have reached the end of the group of degenerate  Morton codes. By computing the \texttt{NEXT} and \texttt{MORE} pointers this way, we avoid having to do any special handling of duplicate  Morton codes during tree construction, while still including the bodies in the force calculation. Since these calculations are both independent and close in memory space, it parallelizes very well. Figure \ref{fig:TreeThreading} shows this process in more detail for a 2 dimensional quadtree, although the process is the same for an octree.
 
 \begin{algorithm}
     \label{alg:OctreeThreading}
@@ -531,7 +557,7 @@ Integration follows the same four step procedure as the brute force algorithm:
     \item Calculate Force
     \item Advance Half Velocity
 \end{enumerate}
-In fact, the only difference between the brute force GPU algorithm and the Treecode GPU algorithm is how the forces are calculated. Before the integration step, we return all the body node information back to the individualized memory buffers that the brute force algorithm uses, as having individual values next to eachother in memory will improve performance, and prevents us from having to initialize additional kernels.
+In fact, the only difference between the brute force GPU algorithm and the Treecode GPU algorithm is how the forces are calculated. Before the integration step, we return all the body node information back to the individualized memory buffers that the brute force algorithm uses, as having individual values next to each other in memory will improve performance and prevents us from having to initialize additional kernels.
 %==================================================================
 \chapter{RESULTS}
 %- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
@@ -549,6 +575,31 @@ In fact, the only difference between the brute force GPU algorithm and the Treec
 %- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 \section{Performance}
 \subsection{Brute Force}
+Performance of the brute force algorithm is $O\left(N^2/P\right)$ where $N$ is the number of bodies in a simulation and $P$ is the number of available processors. Shown in Table \ref{tab:BruteForcePerformance} and Figure \ref{fig:BruteForcePerformance} we compare the performance of the GPU and CPU brute force algorithms measured by time to complete 1000 simulation timesteps. The CPU used was a dual-core Intel i5 with 4 available threads. The GPUs used were an NVS 5400M with 96 available CUDA cores, and a GTX Titan Z with 5760 available CUDA cores.
+\begin{table}
+    \centering
+    \caption{Brute Force algorithm performance comparison between CPU and GPU.}
+    \label{tab:BruteForcePerformance}
+    \begin{tabular}{|c|||c||c|}
+        \hline
+        \multicolumn{3}{|c|}{Time to Complete 1000 Simulation Timesteps (s)}\\
+        \hline
+        Bodies & i5-3360M & NVS 5400M \\
+        \hline
+        1024 & 9 & 3\\
+        2048 & 34 & 10\\
+        4096 & 158 & 39\\
+        8192 & 743 & 168\\
+        \hline
+    \end{tabular}
+\end{table}
+\begin{figure}[t]
+    \caption{Brute Force algorithm performance comparison between CPU and GPU}
+    \label{fig:BruteForcePerformance}
+    \centering
+    \includegraphics[width=15cm]{BruteForcePerformance}
+\end{figure}
+As expected, the GPU shows $O(N^2)$ performance with a flatter curve than the CPU due to the higher number of available cores.
 \subsection{Tree Construction}
 Shown in Figure \ref{fig:treeConstructionPerformance} and Table \ref{tab:treeConstructionPerformance} is a breakdown of GPU vs CPU performance. Figure \ref{fig:treeConstructionProfiling} shows the GPU tree construction profile. While these results are not yet what we would like to see out of the GPU, they do show promise that further optimization can produce even faster results. Examining Figure \ref{fig:treeConstructionProfiling}, we see that the vast majority of the computation time is taken up by the tree construction kernels.
 \begin{table}
@@ -626,8 +677,7 @@ For a fair comparison, we can remove COM calculation from the CPU tree construct
 \end{table}
 
 \begin{figure}[h]
-    \caption{Performance comparison between GPU and CPU tree construction kernels without COM calculation}
-    \label{fig:TreeConstructionPerformanceNoCOM}
+    \caption{\label{fig:TreeConstructionPerformanceNoCOM} Performance comparison between GPU and CPU tree construction kernels without COM calculation}
     \centering
     \includegraphics[width=\textwidth]{TreeConstructionPerformanceNoCOM}
 \end{figure}
@@ -639,29 +689,21 @@ While much has been accomplished at the time of the writing of this paper, there
 As seen in the results discussion, inefficient calculation of the COM caused major performance reduction. In order to implement an efficient COM calculation, we can create a kernel which will sweep up the tree level by level, calculating the COM contribution at each layer based on the COM and enclosed mass of each child node. This upsweep kernel will also be used for the future implementation of the Fast Multipole Method.
 
 \section{Fast Multipole Method}
-While Barnes Hut is a step in the right direction, the Fast Multipole Method, first proposed by [INSERT CITATION] provides an even better performance benefit. Fortunately, FMM can utilize the same tree structure, meaning that the majority of the work so far has actually been towards implementation of FMM. Barnes-Hut is an easy checkpoint to prove that the tree is calculated properly. For implementation of FMM, the center of mass upsweep kernel will be used to compute the inner product of the multipole expansion, followed by a downsweep kernel which will compute the outer product as the tree is traversed from the root to the leaves.
+While Barnes-Hut is a step in the right direction, the Fast Multipole Method, first proposed by \cite{GREENGARD1987} provides an even better performance benefit. Fortunately, FMM can utilize the same tree structure, meaning that the majority of the work so far has actually been towards implementation of FMM. Barnes-Hut is an easy checkpoint to prove that the tree is calculated properly. For implementation of FMM, the center of mass upsweep kernel will be used to compute the inner product of the multipole expansion, followed by a downsweep kernel which will compute the outer product as the tree is traversed from the root to the leaves.
 
 \section{Checkpointing for simulation safety}
 An important aspect of running large-scale, and especially lengthy simulations is the process of checkpointing. Before GPU N-Body can be released to the volunteer network, checkpointing must be implemented. Because the network uses all volunteer computing power, checkpointing plays an even more important role, as we do not know the condition of the machines we are running on. To implement checkpointing without inducing too much additional load on the GPU, we can take advantage of the fact that openCL uses a queue based system for running kernels. When we wish to checkpoint, we can simply periodically enqueue a blocking buffer read on the device, which will allow the host machine to read data from the device, which can then be written to a checkpoint file.
 
 \section{Replacement of Bitonic sort with Radix sort}
-Bitonic sort was initially chosen due to its easy parallelizability, however another sorting algorithm, Radix sort, may offer a performance benefit, as the amount of time taken for radix sort does depend on the underlying data organization. Since particles typically do not move very far in relation to their neighbors during each step of the simulation, this can provide a great performance increase to Radix.
-%https://arxiv.org/pdf/1511.03404.pdf
-\section{Reduction of GPU memory by reducing binary and octree buffer size}
+Bitonic sort was initially chosen due to its easy parallelizability, however another sorting algorithm, Radix sort, may offer a performance benefit. \cite{DBLP:journals/corr/BozidarD15} shows a comparison of several different sorting algorithms, with different underlying data distributions. The performance of Radix sort far surpasses that of Bitonic sort, especially for long sequence lengths. As sorting the particles takes up a large amount of the performance profile, it is our hope to implement parallel Radix sort before the release of GPU MilkyWay@Home N-Body to further increase the efficiency of our user's volunteer computing time.
+% \section{Reduction of GPU memory by reducing binary and octree buffer size}
 
 
 %==================================================================
 % The following produces a numbered bibliography where the numbers
 % correspond to the \cite commands in the text.
-\specialhead{LITERATURE CITED}
-\begin{singlespace}
-\begin{thebibliography}{99}
-\bibitem{thisbook} This is the first item in the Bibliography.
-Let's make it very long so it takes more than one line.
-Let's make it very long so it takes more than one line.
-\bibitem{anotherbook} The second item in the Bibliography.
-\end{thebibliography}
-\end{singlespace}
+% \specialhead{LITERATURE CITED}
+\bibliography{bibfile}
 
 %==================================================================
 %%%%%%%%%%%%%%%%%%%%%%%  For Appendices  %%%%%%%%%%%%%%%%%%%
@@ -672,8 +714,7 @@ Let's make it very long so it takes more than one line.
 % Z-ORDER CURVE
 % ---------------------
 \begin{figure}[h]
-    \caption{Z-Order curve on sample particle distribution using 6 bits or three levels of resolution for a two dimensional simulation.  Note the degeneracy condition when there is insufficient bit resolution to seperate two particles.}
-    \label{fig:MortonCurve}
+    \caption{\label{fig:MortonCurve} Z-Order curve on sample particle distribution using 6 bits or three levels of resolution for a two dimensional simulation.  Note the degeneracy condition when there is insufficient bit resolution to seperate two particles.}
     \centering
     \includegraphics[width=15cm]{MortonCurve}
 \end{figure}
@@ -682,8 +723,7 @@ Let's make it very long so it takes more than one line.
 % BITONIC MORTON SORT
 % ---------------------
 \begin{figure}[h]
-    \caption{Results of sorting an unordered array of particles keyed with  Morton codes. Degenerate particles will always end up next to eachother in the final sorted array as they share a  Morton code.}
-    \label{fig:BitonicSortResult}
+    \caption{\label{fig:BitonicSortResult} Results of sorting an unordered array of particles keyed with  Morton codes. Degenerate particles will always end up next to each other in the final sorted array as they share a  Morton code.}
     \centering
     \includegraphics[width=10cm]{BitonicSortResult}
 \end{figure}
@@ -692,114 +732,66 @@ Let's make it very long so it takes more than one line.
 % COMPACT MORTON CODES
 % ---------------------
 \begin{sidewaysfigure}[h]
-    \label{fig:CompactMortonCodes}
     \centering
     \includegraphics[width=\textwidth]{CompactMortonCodes}
-    \caption{Results of sorting an unordered array of particles keyed with  Morton codes. Degenerate particles will always end up next to eachother in the final sorted array as they share a  Morton code.}
+    \caption{\label{fig:CompactMortonCodes} Process outline of compaction of degenerate morton codes by marking and calculating a prefix sum offset array.}
 \end{sidewaysfigure}
 \clearpage
 % ---------------------
 % BINARY TREE GENERATION
 % ---------------------
 \begin{sidewaysfigure}[h]
-    \label{fig:BinaryTreeGeneration}
     \centering
     \includegraphics[width=\textwidth]{BinaryTreeGeneration}
-    \caption{Results of sorting an unordered array of particles keyed with  Morton codes. Degenerate particles will always end up next to eachother in the final sorted array as they share a  Morton code.}
+    \caption{\label{fig:BinaryTreeGeneration} Generation of the binary tree from the underlying Morton code structure. Note how each node is placed directly above its corresponding Morton code.}
 \end{sidewaysfigure}
 \clearpage
 % ---------------------
 % OCTREE NODE CONTRIBUTION
 % ---------------------
 \begin{sidewaysfigure}[h]
-    \label{fig:OctreeNodeContribution}
     \centering
     \includegraphics[width=\textwidth]{OctreeNodeContribution}
-    \caption{Results of sorting an unordered array of particles keyed with  Morton codes. Degenerate particles will always end up next to eachother in the final sorted array as they share a  Morton code.}
+    \caption{\label{fig:OctreeNodeContribution} Calculation of the octree node contribution array using the same marking and parallel prefix sum technique as the compaction algorithm, except the NC array gives the location of each of the octree nodes for a given binary tree node.}
 \end{sidewaysfigure}
 \clearpage
 % ---------------------
 % OCT NODE GENERATION
 % ---------------------
 \begin{sidewaysfigure}[h]
-    \label{fig:OctreeNodeGeneration}
     \centering
     \includegraphics[width=\textwidth]{OctreeNodeGeneration}
-    \caption{Creation of octree nodes and strands from the node counts array. Note that strands are always created in contiguous memory space, which allows us to compute offsets more easily when attaching children.}
+    \caption{\label{fig:OctreeNodeGeneration} Creation of octree nodes and strands from the node counts array. Note that strands are always created in contiguous memory space, which allows us to compute offsets more easily when attaching children.}
 \end{sidewaysfigure}
 \clearpage
 % ---------------------
 % OCTREE LINKING
 % ---------------------
 \begin{sidewaysfigure}[h]
-    \label{fig:TreeLinking}
     \centering
     \includegraphics[width=\textwidth]{TreeLinking}
-    \caption{Linking process shown for one body. In this step, bodies are linked with the overall octree structure. Note how in groups of degenerate particles, only the leftmost particle is added to the hierarchy.}
+    \caption{\label{fig:TreeLinking} Linking process shown for one body. In this step, bodies are linked with the overall octree structure. Note how in groups of degenerate particles, only the leftmost particle is added to the hierarchy.}
 \end{sidewaysfigure}
 \clearpage
 % ---------------------
 % OCTREE THREADING
 % ---------------------
 \begin{sidewaysfigure}[h]
-    \label{fig:TreeThreading}
     \centering
     \includegraphics[width=\textwidth]{TreeThreading}
-    \caption{Threading of a quadtree including a degenerate  Morton code condition. Black connectors represent parent-child relations, while red arrows represent NEXT and MORE relations. Arrows stemming from M correspond to MORE and arrows stemming from N correspond to NEXT.}
+    \caption{\label{fig:TreeThreading} Threading of a quadtree including a degenerate  Morton code condition. Black connectors represent parent-child relations, while red arrows represent NEXT and MORE relations. Arrows stemming from M correspond to MORE and arrows stemming from N correspond to NEXT.}
 \end{sidewaysfigure}
 \clearpage
 % ---------------------
 % FORCE CALCULATION
 % ---------------------
 \begin{sidewaysfigure}[h]
-    \label{fig:ForceCalculationTreecode}
     \centering
     \includegraphics[width=\textwidth]{ForceCalculationTreecode}
-    \caption{Threading of a quadtree including a degenerate  Morton code condition. Black connectors represent parent-child relations, while red arrows represent NEXT and MORE relations. Arrows stemming from M correspond to MORE and arrows stemming from N correspond to NEXT.}
+    \caption{\label{fig:ForceCalculationTreecode} Threading of a quadtree including a degenerate  Morton code condition. Black connectors represent parent-child relations, while red arrows represent NEXT and MORE relations. Arrows stemming from M correspond to MORE and arrows stemming from N correspond to NEXT.}
 \end{sidewaysfigure}
 \clearpage
 
-\chapter{CONSTANTS AND FUNCTIONS}
-\begin{table}[!h]
-    \centering
-    \caption{Table of constants used in algorithms}
-    \label{tab:Constants}
-    \begin{tabular}{|p{3cm}|p{10cm}|}
-        \hline
-        Constant & Description \\
-        \hline\hline
-        BPL & Bits Per Level: Required bits to encode one level of a tree structure. For quadtrees this value is two, and for octrees this value is three.\\
-        \hline
-        EFFNBODY & Total number of bodies including inserted dummy particles.\\
-        \hline
-        EPS2 & Softening parameter used to prevent singularities when particles are extremely close.\\
-        \hline
-        NBODY & Number of bodies in the simulation.\\
-        \hline
-        PREFIX & Partial Morton code used to identify the range of codes that a particular node covers.\\
-        \hline
-        RANGE & Range of particles which are contained within one node of binary tree.\\
-        \hline
-        SPLIT & Location of child indices in binary tree found using highest order differing bit in RANGE. Children located at SPLIT and SPLIT + 1.\\
-        \hline
-        TIMESTEP & Delta T for one step of the simulation.\\
-        \hline
-    \end{tabular}
-\end{table}
-\begin{table}[!h]
-    \centering
-    \caption{Table of functions used in algorithms}
-    \label{tab:Functions}
-    \begin{tabular}{|p{3cm}|p{10cm}|}
-        \hline
-        Function & Description \\
-        \hline\hline
-        CLZ(a) & Count Leading Zeroes function, counts the number of leading zeroes of a binary number starting with the MSB.\\
-        \hline
-        MAD(a, b, c) & Fused Multiply Add GPU function. First two arguments are multiplied, and the third argument is added after multiplication. Equivalent to $a \cdot b + c$.\\
-        \hline
-    \end{tabular}
-\end{table}
 
 % %==================================================================
 % \chapter{THIS IS ANOTHER APPENDIX}
